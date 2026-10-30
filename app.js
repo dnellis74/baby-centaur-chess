@@ -304,6 +304,13 @@ class BoardView {
 
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    // The board's size follows its container, which changes on rotation,
+    // browser resize, and layout shifts — watch the container directly
+    // so the canvas never lags behind the responsive layout.
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(container);
+    }
     this.bindInput();
     this.animate();
   }

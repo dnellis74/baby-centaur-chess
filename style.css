@@ -1,6 +1,9 @@
 /* Baby Centaur Chess — Phase 1 styles.
-   Dark, cozy board-room theme. Pastel green (#b7e4a8) is reserved for
-   partner highlights so it always reads as "the AI agrees". */
+   Phone-first: the base styles ARE the small-screen layout (single
+   column, full-width board, 44px touch targets). Wider screens add room
+   via min-width queries (row layout, fixed sidebar). Dark, cozy
+   board-room theme. Pastel green (#b7e4a8) is reserved for partner
+   highlights so it always reads as "the AI agrees". */
 
 * { box-sizing: border-box; }
 
@@ -10,23 +13,26 @@ html, body {
   background: #101418;
   color: #e8ecef;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 16px; /* 16px inputs keep mobile browsers from zooming on focus */
 }
 
+body { overflow-x: hidden; }
+
 .app-header {
-  padding: 16px 24px 8px;
+  padding: 12px 12px 8px;
   border-bottom: 1px solid #232c38;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 26px;
+  font-size: 22px;
   letter-spacing: 0.2px;
 }
 
 .tagline {
   margin: 4px 0 8px;
   color: #9aa7b5;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .engine-status {
@@ -38,6 +44,7 @@ html, body {
 }
 
 .engine-status .dot {
+  flex: 0 0 auto;
   width: 10px;
   height: 10px;
   border-radius: 50%;
@@ -47,25 +54,26 @@ html, body {
 .engine-status.ready .dot { background: #9ed49a; }
 .engine-status.failed .dot { background: #e06c5a; }
 
+/* Base layout: one column, board on top, controls below. */
 .layout {
   display: flex;
-  gap: 20px;
-  padding: 16px 24px 24px;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 12px 24px;
 }
 
-.board-column { flex: 1 1 auto; min-width: 0; }
+.board-column { width: 100%; min-width: 0; }
 
 .board-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: stretch;
 }
 
 /* Vertical evaluation bar: white share grows upward from the bottom. */
 .eval-bar {
   position: relative;
-  width: 22px;
+  width: 16px;
   background: #1d232e;
   border: 1px solid #2b3542;
   border-radius: 6px;
@@ -98,8 +106,10 @@ html, body {
 .scene-container {
   position: relative;
   flex: 1 1 auto;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
   aspect-ratio: 1 / 1;
-  min-height: 320px;
   background: #171d27;
   border: 1px solid #2b3542;
   border-radius: 10px;
@@ -111,6 +121,9 @@ html, body {
   width: 100%;
   height: 100%;
   cursor: grab;
+  /* Dragging a piece must move the piece, not scroll the page. */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .scene-container canvas:active { cursor: grabbing; }
@@ -142,17 +155,17 @@ html, body {
 }
 
 .sidebar {
-  flex: 0 0 320px;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .panel {
   background: #1a212b;
   border: 1px solid #2b3542;
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 12px 14px;
 }
 
 .panel h2 {
@@ -186,7 +199,10 @@ html, body {
   font-size: 13px;
   color: #9aa7b5;
   margin-bottom: 10px;
+  min-height: 32px;
 }
+
+.check-label input { width: 18px; height: 18px; }
 
 select, button {
   font: inherit;
@@ -194,7 +210,8 @@ select, button {
   background: #232c38;
   border: 1px solid #35404e;
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 12px 10px;
+  min-height: 44px; /* comfortable touch target */
 }
 
 select { width: 100%; margin-bottom: 10px; }
@@ -209,7 +226,12 @@ button:disabled { opacity: 0.5; cursor: default; }
   flex-wrap: wrap;
 }
 
-.button-row button { flex: 1 1 auto; }
+.button-row button {
+  flex: 1 1 0;
+  padding: 12px 6px;
+  font-size: 15px;
+  text-align: center;
+}
 
 .lines, .moves {
   margin: 0;
@@ -225,7 +247,39 @@ button:disabled { opacity: 0.5; cursor: default; }
   overflow-y: auto;
 }
 
-@media (max-width: 800px) {
-  .layout { flex-direction: column; }
-  .sidebar { flex-basis: auto; width: 100%; }
+/* Short landscape phones: keep the board from pushing the controls
+   a long scroll down the page. */
+@media (max-height: 500px) {
+  .scene-container { max-width: calc(100dvh - 120px); }
+}
+
+/* Wider screens: board and sidebar side by side, board fills its column. */
+@media (min-width: 900px) {
+  .app-header { padding: 16px 24px 8px; }
+  .app-header h1 { font-size: 26px; }
+  .tagline { font-size: 14px; }
+
+  .layout {
+    flex-direction: row;
+    gap: 20px;
+    padding: 16px 24px 24px;
+    align-items: flex-start;
+  }
+
+  .board-column { flex: 1 1 auto; }
+  .board-row { gap: 10px; }
+  .eval-bar { width: 22px; }
+
+  .scene-container {
+    max-width: none;
+    min-height: 320px;
+  }
+
+  .sidebar {
+    flex: 0 0 320px;
+    width: auto;
+    gap: 16px;
+  }
+
+  .panel { padding: 14px 16px; }
 }
