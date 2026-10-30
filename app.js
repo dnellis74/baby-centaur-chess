@@ -919,7 +919,7 @@ class CentaurApp {
     });
 
     this.mode = document.getElementById('mode').value; // 'solo' | 'advise'
-    // Assist dial: 'full' (hints + intercept), 'hints' (no intercept),
+    // Assist dial: 'full' (suggested moves only), 'hints' (no intercept),
     // 'off' (no partner output at all). This is the partner's help level,
     // not the solo opponent — Stockfish still plays Black in solo mode
     // when assist is off. Networked rule (decided 2026-10-30): centaur
@@ -929,6 +929,7 @@ class CentaurApp {
     this.cachedAnalysis = null; // { fen, lines } — freshest engine view
     this.highlightFen = null;
     this.highlightSquares = new Set();
+    this.highlightPairs = []; // (from, to) pairs behind the live suggestions
     this.toastTimer = null;
 
     this.el = {
@@ -943,7 +944,14 @@ class CentaurApp {
     };
 
     document.getElementById('btn-new').addEventListener('click', () => this.newGame());
-    document.getElementById('btn-flip').addEventListener('click', () => this.view.setFlipped(!this.view.flipped));
+    document.getElementById('btn-flip').addEventListener('click', () => {
+      this.view.setFlipped(!this.view.flipped);
+      // Flipping wipes overlays; re-show this turn's suggestions.
+      if (this.highlightPairs.length > 0) {
+        this.view.setHighlights(this.highlightPairs.map((p) => p.to));
+        this.view.setArrows(this.highlightPairs);
+      }
+    });
     document.getElementById('btn-hint').addEventListener('click', () => this.showHint());
     document.getElementById('mode').addEventListener('change', (e) => {
       this.mode = e.target.value;
@@ -957,6 +965,7 @@ class CentaurApp {
         this.view.clearHighlights();
         this.highlightFen = null;
         this.highlightSquares = new Set();
+        this.highlightPairs = [];
         this.el.lines.innerHTML = '<li class="lines-empty">AI assist is off.</li>';
         this.el.evalFill.style.height = '50%';
         this.el.evalLabel.textContent = '—';
@@ -976,7 +985,12 @@ class CentaurApp {
     document.getElementById('auto-hints').addEventListener('change', (e) => {
       this.autoHints = e.target.checked;
       if (this.autoHints) this.maybeAutoHint();
-      else this.view.clearHighlights();
+      else {
+        this.view.clearHighlights();
+        this.highlightFen = null;
+        this.highlightSquares = new Set();
+        this.highlightPairs = [];
+      }
     });
   }
 
@@ -1098,6 +1112,7 @@ class CentaurApp {
     const pairs = this.pickHighlightDestinations(lines, null);
     this.highlightFen = fen;
     this.highlightSquares = new Set(pairs.map((p) => p.to));
+    this.highlightPairs = pairs;
     this.view.setHighlights(pairs.map((p) => p.to));
     this.view.setArrows(pairs);
   }
@@ -1112,11 +1127,20 @@ class CentaurApp {
     if (this.state.fen() !== fen) return; // user moved on meanwhile
     this.cachedAnalysis = { fen, lines };
     this.renderAnalysis(lines);
-    const pairs = this.pickHighlightDestinations(lines, square);
-    this.highlightFen = fen;
-    this.highlightSquares = new Set(pairs.map((p) => p.to));
-    this.view.setHighlights(pairs.map((p) => p.to));
-    this.view.setArrows(pairs);
+    // Suggestions are position-level and stay put while a piece is held:
+    // selecting another piece must not swap them for that piece's moves,
+    // or holding a piece with no suggested move would hide them all.
+    // Only fill them in when nothing is live for this position yet
+    // (e.g. auto hints off, first selection of the turn). `square` is
+    // intentionally not used to filter here.
+    if (this.highlightFen !== fen || this.highlightSquares.size === 0) {
+      const pairs = this.pickHighlightDestinations(lines, null);
+      this.highlightFen = fen;
+      this.highlightSquares = new Set(pairs.map((p) => p.to));
+      this.highlightPairs = pairs;
+      this.view.setHighlights(pairs.map((p) => p.to));
+      this.view.setArrows(pairs);
+    }
   }
 
   async showHint() {
@@ -1133,6 +1157,7 @@ class CentaurApp {
     const pairs = this.pickHighlightDestinations(lines, null);
     this.highlightFen = fen;
     this.highlightSquares = new Set(pairs.map((p) => p.to));
+    this.highlightPairs = pairs;
     this.view.setHighlights(pairs.map((p) => p.to));
     this.view.setArrows(pairs);
     this.toast("Your partner's top ideas are glowing green.");
@@ -1140,24 +1165,41 @@ class CentaurApp {
 
   /* Move resolution -------------------------------------------------- */
 
-  // Every human drop lands here. Flow:
-  //  highlighted destination -> apply immediately.
-  //  legal but unhighlighted -> quick engine check; intercept and bounce
-  //    back if the move drops evaluation by more than BLUNDER_DROP_CP.
-  //  illegal -> snap back (no engine call, no state change).
+  // Every human drop lands here. Flow at default settings (assist
+  // 'full'): ONLY suggested destinations are playable. A legal drop
+  // anywhere else bounces home, blunder or not, and the suggestions
+  // stay on the board because the turn is not complete yet.
+  // At 'hints'/'off' any legal move stands (the dial's point).
+  // Illegal drops snap back (no engine call, no state change).
+  // Highlights/arrows are never cleared mid-turn — only a finalized
+  // move clears them — so they survive selection, holding, and bounces.
   async handleHumanMove(from, to) {
     if (this.inputLocked || this.state.isGameOver()) { this.view.snapBack(from); return; }
     const res = this.state.tryMove(from, to);
     if (!res) { this.view.snapBack(from); return; }
 
+    // Selection clears, but suggestions stay until the turn completes.
     this.view.clearSelection();
-    this.view.clearHighlights();
     this.inputLocked = true;
     this.view.interactive = false;
 
     const highlighted = this.highlightFen === res.fenBefore && this.highlightSquares.has(to);
-    // Intercept only runs at full assist. At 'hints' or 'off' the move
-    // stands as played, however bad — that is the point of the dial.
+    const suggestionsLive = this.highlightFen === res.fenBefore && this.highlightSquares.size > 0;
+
+    // Default setting: only suggested moves are playable.
+    if (this.assist === 'full' && !highlighted && suggestionsLive) {
+      this.state.undo();
+      this.view.bounceBack(from);
+      this.toast('Only the glowing green moves are allowed on this setting. Pick one of those to finish your turn.');
+      this.inputLocked = false;
+      this.view.interactive = true;
+      this.refreshUI();
+      return;
+    }
+
+    // Fallback at full assist when no suggestions are live (engine
+    // unavailable): the old blunder intercept still guards the move.
+    // At 'hints'/'off' the move stands as played, however bad.
     if (!highlighted && this.assist === 'full') {
       // Best score before the move (cached selection analysis, else fresh).
       let bestBefore = null;
@@ -1206,6 +1248,8 @@ class CentaurApp {
     this.network.sendMove({ from: move.from, to: move.to, san: move.san, afterFen: res.fenAfter });
     this.highlightFen = null;
     this.highlightSquares = new Set();
+    this.highlightPairs = [];
+    this.view.clearHighlights(); // turn complete: suggestions leave with it
     this.refreshUI();
     this.inputLocked = false;
     this.view.interactive = true;
@@ -1238,6 +1282,7 @@ class CentaurApp {
     this.cachedAnalysis = null;
     this.highlightFen = null;
     this.highlightSquares = new Set();
+    this.highlightPairs = [];
     this.inputLocked = false;
     this.view.interactive = true;
     this.el.lines.innerHTML = '<li class="lines-empty">Select a piece or press “Ask partner”.</li>';
