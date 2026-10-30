@@ -282,6 +282,10 @@ class BoardView {
       color: 0xb7e4a8, emissive: 0x86c06c, emissiveIntensity: 0.8,
       transparent: true, opacity: 0.85,
     });
+    // Glowing green arrows: one per highlighted destination, arcing from
+    // the moving piece to its suggested destination tile.
+    this.arrowMat = new THREE.MeshBasicMaterial({ color: 0x7ed957, transparent: true, opacity: 0.9 });
+    this.arrows = [];
     this.highlights = new Map(); // square -> Mesh
     this.selectMat = new THREE.MeshStandardMaterial({
       color: 0xa8c8e8, emissive: 0x5a8ac0, emissiveIntensity: 0.7,
@@ -391,6 +395,41 @@ class BoardView {
   clearHighlights() {
     for (const m of this.highlights.values()) this.scene.remove(m);
     this.highlights.clear();
+    this.clearArrows();
+  }
+
+  // One arcing arrow per (from, to) pair. The arc peaks above the pieces
+  // so the arrow reads clearly instead of clipping through them.
+  setArrows(pairs) {
+    this.clearArrows();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (const { from, to } of pairs) {
+      if (from === to) continue;
+      const a = this.squareToPos(FILES.indexOf(from[0]), parseInt(from[1], 10) - 1);
+      const b = this.squareToPos(FILES.indexOf(to[0]), parseInt(to[1], 10) - 1);
+      const start = new THREE.Vector3(a.x, 0.25, a.z);
+      const end = new THREE.Vector3(b.x, 0.25, b.z);
+      const dist = start.distanceTo(end);
+      if (dist < 0.5) continue;
+      const mid = start.clone().lerp(end, 0.5);
+      mid.y = 0.25 + Math.min(1.6, 0.6 + dist * 0.35);
+      const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
+      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.045, 8, false), this.arrowMat);
+      const tangent = curve.getTangent(1).normalize();
+      const coneH = 0.42;
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.17, coneH, 14), this.arrowMat);
+      cone.quaternion.setFromUnitVectors(up, tangent);
+      cone.position.copy(end).addScaledVector(tangent, -coneH / 2 + 0.05);
+      const group = new THREE.Group();
+      group.add(tube, cone);
+      this.scene.add(group);
+      this.arrows.push(group);
+    }
+  }
+
+  clearArrows() {
+    for (const g of this.arrows) this.scene.remove(g);
+    this.arrows = [];
   }
 
   setSelected(square) {
@@ -549,8 +588,9 @@ class BoardView {
     const now = performance.now();
     const t = this.clock.getElapsedTime();
 
-    // Soft pulse on the green highlights.
+    // Soft pulse on the green highlights and arrows.
     this.highlightMat.emissiveIntensity = 0.65 + 0.35 * Math.sin(t * 3);
+    this.arrowMat.opacity = 0.7 + 0.3 * Math.sin(t * 3);
 
     this.tweens = this.tweens.filter((tw) => {
       const p = Math.min(1, (now - tw.start) / tw.durMs);
@@ -779,8 +819,16 @@ class CentaurApp {
         this.el.evalFill.style.height = '50%';
         this.el.evalLabel.textContent = '—';
       } else {
-        this.refreshAnalysis();
+        this.refreshAnalysis().then(() => this.maybeAutoHint());
       }
+    });
+    // Auto hints are ON by default: the partner asks for hints every turn
+    // without waiting for a selection or the Ask button.
+    this.autoHints = document.getElementById('auto-hints').checked;
+    document.getElementById('auto-hints').addEventListener('change', (e) => {
+      this.autoHints = e.target.checked;
+      if (this.autoHints) this.maybeAutoHint();
+      else this.view.clearHighlights();
     });
   }
 
@@ -794,7 +842,9 @@ class CentaurApp {
       : 'Partner unavailable (engine failed to load) — playing without hints';
     this.view.setPieces(this.state.pieces());
     this.refreshUI();
-    this.refreshAnalysis(); // background: fills eval bar + lines panel
+    // Background analysis fills eval bar + lines panel, then auto hints
+    // show the partner's ideas for the side to move.
+    this.refreshAnalysis().then(() => this.maybeAutoHint());
   }
 
   /* UI ------------------------------------------------------------ */
@@ -855,23 +905,53 @@ class CentaurApp {
 
   // Gap rule (three-green logic): best always glows; a further line
   // glows only if within HIGHLIGHT_GAP_CP of the best. Cap: 3.
+  // Returns (from, to) pairs so the view can draw arrows, not just tiles.
   pickHighlightDestinations(lines, fromSquare) {
-    const legal = new Map();
     const sorted = [...lines].sort((a, b) => lineScoreCp(b) - lineScoreCp(a));
     if (!sorted.length) return [];
     const best = lineScoreCp(sorted[0]);
-    const dests = [];
+    const pairs = [];
+    const seenTo = new Set();
     for (const line of sorted) {
-      if (dests.length >= CONFIG.MAX_HIGHLIGHTS) break;
+      if (pairs.length >= CONFIG.MAX_HIGHLIGHTS) break;
       if (lineScoreCp(line) < best - CONFIG.HIGHLIGHT_GAP_CP) break;
       const from = line.pv[0].slice(0, 2);
       const to = line.pv[0].slice(2, 4);
       if (fromSquare && from !== fromSquare) continue;
       if (!this.state.isLegal(from, to)) continue;
-      if (!dests.includes(to)) dests.push(to);
-      legal.set(to, line);
+      if (seenTo.has(to)) continue;
+      seenTo.add(to);
+      pairs.push({ from, to });
     }
-    return dests;
+    return pairs;
+  }
+
+  // A turn belongs to a human partner when it is not the solo opponent's.
+  isHumanTurn() {
+    return this.mode === 'advise' || this.state.turn() === 'w';
+  }
+
+  // Auto hints: same as Ask partner, but silent and automatic. Runs at
+  // game start and after every move, for human turns only. Reuses the
+  // cached analysis when it matches the current position.
+  async maybeAutoHint() {
+    if (!this.autoHints || this.assist === 'off') return;
+    if (this.inputLocked || this.state.isGameOver() || !this.isHumanTurn()) return;
+    const fen = this.state.fen();
+    let lines = null;
+    if (this.cachedAnalysis && this.cachedAnalysis.fen === fen) {
+      lines = this.cachedAnalysis.lines;
+    } else {
+      lines = await this.engine.analyze(fen);
+      if (this.state.fen() !== fen || !lines.length) return;
+      this.cachedAnalysis = { fen, lines };
+      this.renderAnalysis(lines);
+    }
+    const pairs = this.pickHighlightDestinations(lines, null);
+    this.highlightFen = fen;
+    this.highlightSquares = new Set(pairs.map((p) => p.to));
+    this.view.setHighlights(pairs.map((p) => p.to));
+    this.view.setArrows(pairs);
   }
 
   /* Partner interaction -------------------------------------------- */
@@ -884,10 +964,11 @@ class CentaurApp {
     if (this.state.fen() !== fen) return; // user moved on meanwhile
     this.cachedAnalysis = { fen, lines };
     this.renderAnalysis(lines);
-    const dests = this.pickHighlightDestinations(lines, square);
+    const pairs = this.pickHighlightDestinations(lines, square);
     this.highlightFen = fen;
-    this.highlightSquares = new Set(dests);
-    this.view.setHighlights(dests);
+    this.highlightSquares = new Set(pairs.map((p) => p.to));
+    this.view.setHighlights(pairs.map((p) => p.to));
+    this.view.setArrows(pairs);
   }
 
   async showHint() {
@@ -901,10 +982,11 @@ class CentaurApp {
     if (this.state.fen() !== fen || !lines.length) return;
     this.cachedAnalysis = { fen, lines };
     this.renderAnalysis(lines);
-    const dests = this.pickHighlightDestinations(lines, null);
+    const pairs = this.pickHighlightDestinations(lines, null);
     this.highlightFen = fen;
-    this.highlightSquares = new Set(dests);
-    this.view.setHighlights(dests);
+    this.highlightSquares = new Set(pairs.map((p) => p.to));
+    this.view.setHighlights(pairs.map((p) => p.to));
+    this.view.setArrows(pairs);
     this.toast("Your partner's top ideas are glowing green.");
   }
 
@@ -980,7 +1062,7 @@ class CentaurApp {
     this.inputLocked = false;
     this.view.interactive = true;
 
-    this.refreshAnalysis();
+    this.refreshAnalysis().then(() => this.maybeAutoHint());
     if (this.mode === 'solo' && this.state.turn() === 'b' && !this.state.isGameOver()) {
       this.aiReply();
     }
@@ -1013,7 +1095,7 @@ class CentaurApp {
     this.el.evalFill.style.height = '50%';
     this.el.evalLabel.textContent = '+0.0';
     this.refreshUI();
-    this.refreshAnalysis();
+    this.refreshAnalysis().then(() => this.maybeAutoHint());
   }
 }
 

@@ -45,7 +45,7 @@
           <div class="toast" id="toast"></div>
         </div>
       </div>
-      <p class="hint-text">Drag a piece, or click it and then click a glowing green tile. Green tiles are your partner's top ideas.</p>
+      <p class="hint-text">Drag a piece, or click it and then click a glowing green tile. Green tiles and arrows are your partner's top ideas.</p>
     </section>
 
     <!-- Sidebar: game state, partner lines, controls -->
@@ -64,6 +64,7 @@
           <option value="hints">Hints only — no intercept</option>
           <option value="off">Off — pure human chess</option>
         </select>
+        <label class="check-label"><input type="checkbox" id="auto-hints" checked> Auto hints each turn</label>
         <div class="button-row">
           <button id="btn-new" type="button">New game</button>
           <button id="btn-flip" type="button">Flip board</button>

@@ -179,6 +179,15 @@ html, body {
   margin-bottom: 4px;
 }
 
+.check-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: #9aa7b5;
+  margin-bottom: 10px;
+}
+
 select, button {
   font: inherit;
   color: #e8ecef;
