@@ -31,6 +31,14 @@ const CONFIG = {
   BLUNDER_DROP_CP: 200,     // intercept if a move loses > 2.0 pawns
   MATE_CP: 100000,          // mate scores are mapped onto this scale
   AI_MOVE_DELAY_MS: 450,    // pause so the solo opponent feels present
+  // Solo-opponent strength (hints always stay at full depth 9 / MultiPV 3).
+  // Gentle searches shallower and sometimes plays its second-best move,
+  // so it makes human-like mistakes and leaves real winning chances.
+  OPPONENT: {
+    gentle: { depth: 5, secondBest: 0.2 },
+    friendly: { depth: 6, secondBest: 0.1 },
+    full: { depth: 9, secondBest: 0 },
+  },
 };
 
 // Squares in chess.js / UCI notation: files a-h, ranks 1-8.
@@ -257,8 +265,15 @@ class BoardView {
 
     // Slightly top-down perspective: board reads as 3D, pieces stay clear.
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-    this.camera.position.set(0, 11.5, 8.5);
-    this.camera.lookAt(0, 0, 0);
+    // View state for pinch zoom: a fixed viewing direction, a look-at
+    // target that pans with two fingers, and a distance that pinches in
+    // and out. The default distance shows the whole board.
+    this.viewDir = new THREE.Vector3(0, 11.5, 8.5).normalize();
+    this.viewTarget = new THREE.Vector3(0, 0, 0);
+    this.viewDistDefault = new THREE.Vector3(0, 11.5, 8.5).length();
+    this.viewDist = this.viewDistDefault;
+    this.viewDistMin = 6.5;
+    this.updateCamera();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -298,6 +313,10 @@ class BoardView {
     this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     this.selectedSquare = null;
     this.dragged = null; // { square, group }
+    this.pointers = new Map(); // pointerId -> { x, y } client coords
+    this.pinch = null; // { prevDist, prevMid } while two fingers are down
+    this.downInfo = null; // { time, x, y, hitPiece } for tap detection
+    this.lastTap = null; // { time, x, y } for double-tap-to-reset
     this.tweens = [];
     this.scalers = [];
     this.clock = new THREE.Clock();
@@ -504,10 +523,10 @@ class BoardView {
   bindInput() {
     const el = this.renderer.domElement;
 
-    const setPointer = (e) => {
+    const setPointer = (x, y) => {
       const rect = el.getBoundingClientRect();
-      this.pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      this.pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      this.pointer.x = ((x - rect.left) / rect.width) * 2 - 1;
+      this.pointer.y = -((y - rect.top) / rect.height) * 2 + 1;
     };
 
     const pickPiece = () => {
@@ -525,10 +544,62 @@ class BoardView {
       return this.raycaster.ray.intersectPlane(this.dragPlane, point) ? point : null;
     };
 
+    const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+
+    // Pinch zoom + two-finger pan: the board point under the fingers'
+    // midpoint stays under it, so pinching zooms into that part of the
+    // board and sliding both fingers moves the view around it.
+    const pinchMove = () => {
+      const pts = [...this.pointers.values()];
+      if (pts.length !== 2 || !this.pinch) return;
+      const d = dist2(pts[0], pts[1]);
+      const mid = mid2(pts[0], pts[1]);
+      if (d < 1) return;
+      setPointer(this.pinch.prevMid.x, this.pinch.prevMid.y);
+      const wOld = planePoint();
+      this.viewDist = Math.min(this.viewDistDefault,
+        Math.max(this.viewDistMin, this.viewDist * (this.pinch.prevDist / d)));
+      this.updateCamera();
+      setPointer(mid.x, mid.y);
+      const wNew = planePoint();
+      if (wOld && wNew) {
+        this.viewTarget.x = Math.max(-3.5, Math.min(3.5, this.viewTarget.x + wOld.x - wNew.x));
+        this.viewTarget.z = Math.max(-3.5, Math.min(3.5, this.viewTarget.z + wOld.z - wNew.z));
+        this.updateCamera();
+      }
+      this.pinch.prevDist = d;
+      this.pinch.prevMid = mid;
+    };
+
+    // A drag interrupted by a second finger: the piece goes home.
+    const cancelDrag = () => {
+      if (!this.dragged) return;
+      const { square, group } = this.dragged;
+      const { x, z } = this.squareToPos(FILES.indexOf(square[0]), parseInt(square[1], 10) - 1);
+      group.position.set(x, 0.1, z);
+      this.dragged = null;
+    };
+
     el.addEventListener('pointerdown', (e) => {
+      // Pinch bookkeeping runs even when input is locked: zooming is
+      // view-only and should work while the opponent is thinking.
+      this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pointers.size === 2) {
+        // Second finger down: stop any piece drag, keep the game state.
+        cancelDrag();
+        this.clearSelection(); // suggestions stay visible (kid-friendly)
+        this.downInfo = null;
+        this.lastTap = null;
+        const pts = [...this.pointers.values()];
+        this.pinch = { prevDist: dist2(pts[0], pts[1]), prevMid: mid2(pts[0], pts[1]) };
+        return;
+      }
+      if (this.pointers.size > 2) return;
       if (!this.interactive) return;
-      setPointer(e);
+      setPointer(e.clientX, e.clientY);
       const square = pickPiece();
+      this.downInfo = { time: performance.now(), x: e.clientX, y: e.clientY, hitPiece: !!square };
       if (square) {
         const group = this.pieceGroups.get(square);
         if (group.userData.color !== this.turn) {
@@ -537,9 +608,10 @@ class BoardView {
           return;
         }
         if (this.selectedSquare === square) {
-          // Clicking the selected piece again cancels the selection.
+          // Tapping the selected piece again puts it down, but the
+          // partner's suggestions stay on the board: changing your mind
+          // should never hide the help.
           this.clearSelection();
-          this.clearHighlights();
           return;
         }
         this.setSelected(square);
@@ -554,8 +626,12 @@ class BoardView {
     });
 
     window.addEventListener('pointermove', (e) => {
+      if (this.pointers.has(e.pointerId)) {
+        this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (this.pinch) { pinchMove(); return; }
       if (!this.dragged) return;
-      setPointer(e);
+      setPointer(e.clientX, e.clientY);
       const point = planePoint();
       if (!point) return;
       this.dragged.group.position.x = Math.max(-4, Math.min(4, point.x));
@@ -563,10 +639,36 @@ class BoardView {
     });
 
     window.addEventListener('pointerup', (e) => {
-      if (!this.dragged) return;
+      this.pointers.delete(e.pointerId);
+      if (this.pinch) {
+        if (this.pointers.size < 2) this.pinch = null;
+        this.downInfo = null;
+        return; // pinching never drops a piece
+      }
+      if (!this.dragged) {
+        // Tap detection for double-tap-to-reset: two quick taps on
+        // empty board zoom back out to the full board.
+        if (this.downInfo && !this.downInfo.hitPiece) {
+          const dt = performance.now() - this.downInfo.time;
+          const moved = Math.hypot(e.clientX - this.downInfo.x, e.clientY - this.downInfo.y);
+          if (dt < 400 && moved < 12) {
+            const now = performance.now();
+            if (this.lastTap && now - this.lastTap.time < 350 &&
+                Math.hypot(e.clientX - this.lastTap.x, e.clientY - this.lastTap.y) < 40) {
+              this.resetView();
+              this.lastTap = null;
+            } else {
+              this.lastTap = { time: now, x: e.clientX, y: e.clientY };
+            }
+          }
+        }
+        this.downInfo = null;
+        return;
+      }
       const { square, group } = this.dragged;
       this.dragged = null;
-      setPointer(e);
+      this.downInfo = null;
+      setPointer(e.clientX, e.clientY);
       const point = planePoint();
       const tile = point ? this.posToSquare(point.x, point.z) : null;
       if (!tile || tile === square) {
@@ -579,6 +681,13 @@ class BoardView {
       group.position.y = 0.1;
       this.cb.onDrop(square, tile);
     });
+
+    window.addEventListener('pointercancel', (e) => {
+      this.pointers.delete(e.pointerId);
+      if (this.pointers.size < 2) this.pinch = null;
+      cancelDrag();
+      this.downInfo = null;
+    });
   }
 
   resize() {
@@ -588,6 +697,19 @@ class BoardView {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+  }
+
+  // Apply the pinch-zoom view state to the camera.
+  updateCamera() {
+    this.camera.position.copy(this.viewTarget).addScaledVector(this.viewDir, this.viewDist);
+    this.camera.lookAt(this.viewTarget);
+  }
+
+  // Back to the full board (double-tap the board).
+  resetView() {
+    this.viewTarget.set(0, 0, 0);
+    this.viewDist = this.viewDistDefault;
+    this.updateCamera();
   }
 
   animate() {
@@ -730,6 +852,19 @@ class EngineBridge {
     const lines = await this.analyze(fen, { multiPv: 1 });
     return lines.length && lines[0].pv.length ? lines[0].pv[0] : null;
   }
+
+  // Solo-opponent move: a shallower search, and sometimes (secondBest
+  // chance) the second-best line instead of the best. Hints never use
+  // this path, so the partner stays full strength while the opponent
+  // plays like a beatable human.
+  async opponentMove(fen, setting) {
+    const lines = await this.analyze(fen, { multiPv: 2, depth: setting.depth });
+    if (!lines.length || !lines[0].pv.length) return null;
+    if (lines.length > 1 && lines[1].pv.length && Math.random() < setting.secondBest) {
+      return lines[1].pv[0];
+    }
+    return lines[0].pv[0];
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -828,6 +963,12 @@ class CentaurApp {
       } else {
         this.refreshAnalysis().then(() => this.maybeAutoHint());
       }
+    });
+    // Solo-opponent strength: only the Stockfish side in solo mode plays
+    // weaker. Hints, lines, and the blunder intercept stay full strength.
+    this.opponent = document.getElementById('opponent').value;
+    document.getElementById('opponent').addEventListener('change', (e) => {
+      this.opponent = e.target.value;
     });
     // Auto hints are ON by default: the partner asks for hints every turn
     // without waiting for a selection or the Ask button.
@@ -1080,7 +1221,8 @@ class CentaurApp {
     this.inputLocked = true;
     this.view.interactive = false;
     await new Promise((r) => setTimeout(r, CONFIG.AI_MOVE_DELAY_MS));
-    const uci = await this.engine.bestMove(this.state.fen());
+    const setting = CONFIG.OPPONENT[this.opponent] || CONFIG.OPPONENT.full;
+    const uci = await this.engine.opponentMove(this.state.fen(), setting);
     this.inputLocked = false;
     this.view.interactive = true;
     if (!uci || this.state.isGameOver() || this.state.turn() !== 'b') return;

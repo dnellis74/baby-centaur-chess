@@ -45,7 +45,7 @@
           <div class="toast" id="toast"></div>
         </div>
       </div>
-      <p class="hint-text">Drag a piece, or click it and then click a glowing green tile. Green tiles and arrows are your partner's top ideas.</p>
+      <p class="hint-text">Drag a piece, or tap it and then tap a glowing green tile. Green tiles and arrows are your partner's top ideas. Pinch to zoom into the board, slide two fingers to look around, double-tap the board to zoom back out. Tap a piece again and the ideas stay.</p>
     </section>
 
     <!-- Sidebar: game state, partner lines, controls -->
@@ -63,6 +63,12 @@
           <option value="full" selected>Full — hints + blunder intercept</option>
           <option value="hints">Hints only — no intercept</option>
           <option value="off">Off — pure human chess</option>
+        </select>
+        <label class="field-label" for="opponent">Solo opponent</label>
+        <select id="opponent">
+          <option value="gentle" selected>Gentle — easier, makes mistakes</option>
+          <option value="friendly">Friendly — a bit stronger</option>
+          <option value="full">Full strength — Stockfish at depth 9</option>
         </select>
         <label class="check-label"><input type="checkbox" id="auto-hints" checked> Auto hints each turn</label>
         <div class="button-row">
