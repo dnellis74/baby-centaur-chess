@@ -1,0 +1,222 @@
+/* Baby Centaur Chess — Phase 1 styles.
+   Dark, cozy board-room theme. Pastel green (#b7e4a8) is reserved for
+   partner highlights so it always reads as "the AI agrees". */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #101418;
+  color: #e8ecef;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.app-header {
+  padding: 16px 24px 8px;
+  border-bottom: 1px solid #232c38;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: 0.2px;
+}
+
+.tagline {
+  margin: 4px 0 8px;
+  color: #9aa7b5;
+  font-size: 14px;
+}
+
+.engine-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #9aa7b5;
+}
+
+.engine-status .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #e8b93c; /* warming up */
+}
+
+.engine-status.ready .dot { background: #9ed49a; }
+.engine-status.failed .dot { background: #e06c5a; }
+
+.layout {
+  display: flex;
+  gap: 20px;
+  padding: 16px 24px 24px;
+  align-items: flex-start;
+}
+
+.board-column { flex: 1 1 auto; min-width: 0; }
+
+.board-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+/* Vertical evaluation bar: white share grows upward from the bottom. */
+.eval-bar {
+  position: relative;
+  width: 22px;
+  background: #1d232e;
+  border: 1px solid #2b3542;
+  border-radius: 6px;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.eval-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 50%;
+  background: #e8e4d8;
+  transition: height 0.4s ease;
+}
+
+.eval-label {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%) rotate(0deg);
+  writing-mode: vertical-rl;
+  font-size: 11px;
+  color: #101418;
+  mix-blend-mode: normal;
+  z-index: 1;
+}
+
+.scene-container {
+  position: relative;
+  flex: 1 1 auto;
+  aspect-ratio: 1 / 1;
+  min-height: 320px;
+  background: #171d27;
+  border: 1px solid #2b3542;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.scene-container canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.scene-container canvas:active { cursor: grabbing; }
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  max-width: 90%;
+  padding: 10px 16px;
+  background: #1d2733ee;
+  border: 1px solid #b7e4a8;
+  border-radius: 999px;
+  font-size: 14px;
+  text-align: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease;
+  z-index: 5;
+}
+
+.toast.show { opacity: 1; }
+
+.hint-text {
+  color: #9aa7b5;
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+
+.sidebar {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel {
+  background: #1a212b;
+  border: 1px solid #2b3542;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.panel-note {
+  margin: 0 0 8px;
+  color: #9aa7b5;
+  font-size: 12px;
+}
+
+.status {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: #9aa7b5;
+  margin-bottom: 4px;
+}
+
+select, button {
+  font: inherit;
+  color: #e8ecef;
+  background: #232c38;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+select { width: 100%; margin-bottom: 10px; }
+
+button { cursor: pointer; }
+button:hover { background: #2c3847; }
+button:disabled { opacity: 0.5; cursor: default; }
+
+.button-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.button-row button { flex: 1 1 auto; }
+
+.lines, .moves {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+}
+
+.lines li, .moves li { margin-bottom: 6px; }
+.lines-empty { color: #9aa7b5; list-style: none; margin-left: -20px; }
+
+.moves {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+@media (max-width: 800px) {
+  .layout { flex-direction: column; }
+  .sidebar { flex-basis: auto; width: 100%; }
+}

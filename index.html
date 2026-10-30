@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Baby Centaur Chess</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!--
+    No build step. This page uses ES modules + import maps, which require
+    serving over HTTP (not file://) because module scripts and Web Workers
+    are blocked on file:// in most browsers. Run one of:
+      python3 -m http.server 8000
+      npx serve .
+    then open http://localhost:8000
+  -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "chess.js": "https://cdn.jsdelivr.net/npm/chess.js@1.0.0/dist/esm/chess.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>Baby Centaur Chess</h1>
+    <p class="tagline">You and your AI partner, playing as one centaur. Stress-free. No blunders slip through.</p>
+    <div class="engine-status" id="engine-status">
+      <span class="dot" id="engine-dot"></span>
+      <span id="engine-text">Partner warming up…</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <!-- Board column: evaluation bar + 3D canvas -->
+    <section class="board-column">
+      <div class="board-row">
+        <div class="eval-bar" id="eval-bar" title="Evaluation from White's perspective">
+          <div class="eval-fill" id="eval-fill"></div>
+          <span class="eval-label" id="eval-label">+0.0</span>
+        </div>
+        <div class="scene-container" id="scene-container">
+          <div class="toast" id="toast"></div>
+        </div>
+      </div>
+      <p class="hint-text">Drag a piece, or click it and then click a glowing green tile. Green tiles are your partner's top ideas.</p>
+    </section>
+
+    <!-- Sidebar: game state, partner lines, controls -->
+    <aside class="sidebar">
+      <div class="panel">
+        <h2>Status</h2>
+        <p class="status" id="status">White to move</p>
+        <label class="field-label" for="mode">Mode</label>
+        <select id="mode">
+          <option value="solo" selected>Solo vs Stockfish (you play White)</option>
+          <option value="advise">Partner advises both sides</option>
+        </select>
+        <label class="field-label" for="assist">AI assist</label>
+        <select id="assist">
+          <option value="full" selected>Full — hints + blunder intercept</option>
+          <option value="hints">Hints only — no intercept</option>
+          <option value="off">Off — pure human chess</option>
+        </select>
+        <div class="button-row">
+          <button id="btn-new" type="button">New game</button>
+          <button id="btn-flip" type="button">Flip board</button>
+          <button id="btn-hint" type="button">Ask partner</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Partner's top lines</h2>
+        <p class="panel-note">Top 3 Stockfish lines (depth 9, MultiPV 3). Scores are pawns, White's perspective.</p>
+        <ol class="lines" id="lines">
+          <li class="lines-empty">Select a piece or press “Ask partner”.</li>
+        </ol>
+      </div>
+
+      <div class="panel">
+        <h2>Moves</h2>
+        <ol class="moves" id="moves"></ol>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
