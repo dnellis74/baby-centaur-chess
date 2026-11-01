@@ -16,6 +16,7 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
+import { pieceArt } from './pieces.js';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -181,7 +182,7 @@ class GameStateManager extends Emitter {
 /* ------------------------------------------------------------------ */
 /* BoardView — tight 2D DOM board (no canvas, no WebGL)                 */
 /* ------------------------------------------------------------------ */
-/* Renders 64 square divs in a grid, Unicode glyph pieces, and an SVG
+/* Renders 64 square divs in a grid, SVG monster pieces, and an SVG
    overlay for arrows. The view owns no rules: it reports taps and drops
    through callbacks and paints what CentaurApp tells it, through the
    same seam the 3D view used:
@@ -189,11 +190,6 @@ class GameStateManager extends Emitter {
      clearSelection, setFlipped, animateMove, bounceBack, snapBack.
    Square colors stay attached to squares when flipped (a1 is dark):
    color comes from file+rank parity, never from display position. */
-
-const GLYPHS = {
-  w: { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' },
-  b: { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' },
-};
 
 class BoardView {
   constructor(container, callbacks) {
@@ -289,7 +285,7 @@ class BoardView {
       if (!cell) continue;
       const el = document.createElement('div');
       el.className = 'piece ' + (piece.color === 'w' ? 'white' : 'black');
-      el.textContent = GLYPHS[piece.color][piece.type];
+      el.innerHTML = pieceArt(piece.type, piece.color);
       el.dataset.square = square;
       cell.appendChild(el);
       this.pieceEls.set(square, el);
@@ -426,7 +422,7 @@ class BoardView {
 
   // Animate an applied move; captured pieces pop out of existence.
   // Returns a promise that resolves when the animation finishes, so the
-  // app can resync the board from state right after (promotion glyphs).
+  // app can resync the board from state right after (promotion art).
   animateMove(from, to, capturedSquare) {
     if (from === to) return Promise.resolve();
     const done = [];
@@ -1094,7 +1090,6 @@ class CentaurApp {
   // one ringed in green (green always means the partner's suggestion).
   showPromotionPicker(from, to) {
     const color = this.state.turn();
-    const colorClass = color === 'w' ? 'white' : 'black';
     const suggestion = this.suggestPromotion(from, to);
     const names = { q: 'Queen', r: 'Rook', b: 'Bishop', n: 'Knight' };
     const row = document.getElementById('promo-row');
@@ -1102,9 +1097,9 @@ class CentaurApp {
     for (const p of ['q', 'r', 'b', 'n']) {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'promo-btn ' + colorClass + (p === suggestion ? ' suggested' : '');
+      btn.className = 'promo-btn' + (p === suggestion ? ' suggested' : '');
       btn.setAttribute('aria-label', names[p]);
-      btn.textContent = GLYPHS[color][p];
+      btn.innerHTML = pieceArt(p, color);
       if (p === suggestion) {
         const tag = document.createElement('span');
         tag.className = 'promo-tag';
@@ -1228,7 +1223,7 @@ class CentaurApp {
       anims.push(this.view.animateMove('a' + rank, 'd' + rank, null));
     }
     await Promise.all(anims);
-    // Re-render from state: the animation carries the old glyph, so a
+    // Re-render from state: the animation carries the old art, so a
     // promotion only becomes visible here. This also resyncs castling
     // and en passant, so the board can never drift from the rules.
     this.view.setPieces(this.state.pieces());
