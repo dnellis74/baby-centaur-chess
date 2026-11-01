@@ -146,8 +146,8 @@ body { overflow-x: hidden; }
   justify-content: center;
 }
 
-.square.light { background: #f0d9b5; }
-.square.dark { background: #b58863; }
+.square.light { background: #d8edf8; }
+.square.dark { background: #4f8fc7; }
 .square.highlight { background: #b7e4a8; animation: hl-pulse 1.6s ease-in-out infinite; }
 .square.selected { background: #a8c8e8; }
 
@@ -205,6 +205,77 @@ body { overflow-x: hidden; }
 }
 
 .toast.show { opacity: 1; }
+
+/* Promotion picker: modal overlay over the board. */
+.promo-picker {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 20, 24, 0.55);
+  z-index: 10;
+}
+.promo-picker.hidden { display: none; }
+
+.promo-card {
+  background: #232c38;
+  border: 1px solid #3a4756;
+  border-radius: 14px;
+  padding: 16px 18px;
+  text-align: center;
+  max-width: 88%;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.promo-title {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.promo-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.promo-btn {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  font-size: 44px;
+  line-height: 1;
+  background: #1a212b;
+  border: 2px solid #3a4756;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.promo-btn.white { color: #fdf3e3; text-shadow: 0 0 3px #1c2530, 0 1px 1px #1c2530; }
+.promo-btn.black { color: #1c2530; text-shadow: 0 0 2px rgba(253, 243, 227, 0.9); }
+.promo-btn.suggested {
+  border-color: #7ed957;
+  box-shadow: 0 0 0 3px rgba(126, 217, 87, 0.35);
+}
+.promo-tag {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -9px;
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  color: #101418;
+  background: #7ed957;
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.promo-note {
+  margin-top: 14px;
+  font-size: 13px;
+  color: #9aa7b5;
+}
 
 .hint-text {
   color: #9aa7b5;
@@ -322,15 +393,21 @@ button:disabled { opacity: 0.5; cursor: default; }
     gap: 20px;
     padding: 16px 24px 24px;
     align-items: flex-start;
+    max-width: 1600px;
+    margin-inline: auto;
   }
 
   .board-column { flex: 1 1 auto; }
   .board-row { gap: 10px; }
   .eval-bar { width: 22px; }
 
+  /* Responsive cap: the board fits the viewport height as well as the
+     column width. Without this, max-width: none let the board grow to
+     the full column width on wide monitors (1500px+ tall), so the first
+     screen showed nothing but board. The 220px budget covers the header,
+     layout padding, and the hint line under the board. */
   .scene-container {
-    max-width: none;
-    min-height: 320px;
+    max-width: min(100%, calc(100dvh - 220px));
   }
 
   .sidebar {

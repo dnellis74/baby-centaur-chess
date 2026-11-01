@@ -126,11 +126,11 @@ class GameStateManager extends Emitter {
   // responsible for undo() when the centaur decides to intercept.
   // Emits "attemptMove" for every LEGAL drop; illegal drops return null
   // and emit nothing (the view just snaps the piece back).
-  tryMove(from, to) {
+  tryMove(from, to, promotion = 'q') {
     const fenBefore = this.fen();
     let move = null;
     try {
-      move = this.chess.move({ from, to, promotion: 'q' }); // auto-queen: stress-free
+      move = this.chess.move({ from, to, promotion });
     } catch { move = null; }
     if (!move) return null;
     const payload = { from, to, move, fenBefore, fenAfter: this.fen() };
@@ -139,6 +139,17 @@ class GameStateManager extends Emitter {
   }
 
   undo() { return this.chess.undo(); }
+
+  // Test a move without committing it: post-move facts, or null if
+  // illegal. Uses the raw chess object so no "attemptMove" event fires.
+  simulateMove(from, to, promotion = 'q') {
+    let move = null;
+    try { move = this.chess.move({ from, to, promotion }); } catch { return null; }
+    if (!move) return null;
+    const facts = { stalemate: this.chess.isStalemate(), checkmate: this.chess.isCheckmate() };
+    this.chess.undo();
+    return facts;
+  }
 
   history() { return this.chess.history({ verbose: true }); }
 
@@ -414,8 +425,11 @@ class BoardView {
   }
 
   // Animate an applied move; captured pieces pop out of existence.
+  // Returns a promise that resolves when the animation finishes, so the
+  // app can resync the board from state right after (promotion glyphs).
   animateMove(from, to, capturedSquare) {
-    if (from === to) return;
+    if (from === to) return Promise.resolve();
+    const done = [];
     if (capturedSquare) {
       const victim = this.pieceEls.get(capturedSquare);
       if (victim) {
@@ -423,6 +437,7 @@ class BoardView {
           [{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(0)', opacity: 0 }],
           { duration: 200, easing: 'ease-in' });
         pop.onfinish = () => victim.remove();
+        done.push(pop.finished.catch(() => {}));
         this.pieceEls.delete(capturedSquare);
         this.pieceData.delete(capturedSquare);
       }
@@ -430,7 +445,7 @@ class BoardView {
     const el = this.pieceEls.get(from);
     const fromCell = this.cells.get(from);
     const toCell = this.cells.get(to);
-    if (!el || !fromCell || !toCell) return;
+    if (!el || !fromCell || !toCell) return Promise.all(done);
     const data = this.pieceData.get(from);
     const dx = toCell.offsetLeft - fromCell.offsetLeft;
     const dy = toCell.offsetTop - fromCell.offsetTop;
@@ -444,10 +459,12 @@ class BoardView {
       { transform: 'translate(0, 0)' },
     ], { duration: 260, easing: 'ease-out' });
     anim.onfinish = () => { el.style.transform = ''; };
+    done.push(anim.finished.catch(() => {}));
     this.pieceEls.delete(from);
     this.pieceEls.set(to, el);
     this.pieceData.delete(from);
     if (data) this.pieceData.set(to, data);
+    return Promise.all(done);
   }
 
   /* View: pinch zoom + two-finger pan, anchored at the fingers' midpoint. */
@@ -1053,9 +1070,95 @@ class CentaurApp {
   // Illegal drops snap back (no engine call, no state change).
   // Highlights/arrows are never cleared mid-turn — only a finalized
   // move clears them — so they survive selection, holding, and bounces.
-  async handleHumanMove(from, to) {
+  // True when this attempt moves a pawn of the side to move onto its
+  // last rank, and the move is legal (any promotion piece).
+  isPromotionAttempt(from, to) {
+    const piece = this.state.pieces().find((p) => p.square === from);
+    if (!piece || piece.type !== 'p' || piece.color !== this.state.turn()) return false;
+    const lastRank = piece.color === 'w' ? '8' : '1';
+    return to[1] === lastRank && this.state.isLegal(from, to);
+  }
+
+  // The partner's suggested promotion: queen, unless queening stalemates
+  // the opponent and throws away the win, in which case the highest-value
+  // promotion that does not stalemate. Instant and local: no engine wait.
+  suggestPromotion(from, to) {
+    for (const p of ['q', 'r', 'b', 'n']) {
+      const sim = this.state.simulateMove(from, to, p);
+      if (sim && !sim.stalemate) return p;
+    }
+    return 'q';
+  }
+
+  // Promotion picker: four choices in the mover's color, the suggested
+  // one ringed in green (green always means the partner's suggestion).
+  showPromotionPicker(from, to) {
+    const color = this.state.turn();
+    const colorClass = color === 'w' ? 'white' : 'black';
+    const suggestion = this.suggestPromotion(from, to);
+    const names = { q: 'Queen', r: 'Rook', b: 'Bishop', n: 'Knight' };
+    const row = document.getElementById('promo-row');
+    row.innerHTML = '';
+    for (const p of ['q', 'r', 'b', 'n']) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'promo-btn ' + colorClass + (p === suggestion ? ' suggested' : '');
+      btn.setAttribute('aria-label', names[p]);
+      btn.textContent = GLYPHS[color][p];
+      if (p === suggestion) {
+        const tag = document.createElement('span');
+        tag.className = 'promo-tag';
+        tag.textContent = "Partner's pick";
+        btn.appendChild(tag);
+      }
+      btn.addEventListener('click', () => this.commitPromotion(from, to, p));
+      row.appendChild(btn);
+    }
+    document.getElementById('promo-note').textContent =
+      suggestion === 'q'
+        ? 'Queen is the strongest choice here.'
+        : 'Queen would stalemate and throw away the win, so your partner suggests this one instead.';
+    document.getElementById('promo-picker').classList.remove('hidden');
+  }
+
+  closePromotionPicker() {
+    document.getElementById('promo-picker').classList.add('hidden');
+    document.getElementById('promo-row').innerHTML = '';
+  }
+
+  commitPromotion(from, to, piece) {
+    this.closePromotionPicker();
+    this.inputLocked = false;
+    this.view.interactive = true;
+    this.handleHumanMove(from, to, piece);
+  }
+
+  async handleHumanMove(from, to, promotion = null) {
     if (this.inputLocked || this.state.isGameOver()) { this.view.snapBack(from); return; }
-    const res = this.state.tryMove(from, to);
+
+    // Promotion: a pawn reaching the last rank opens the picker instead
+    // of auto-queening, so the kid chooses (with the partner's pick
+    // suggested). At Full assist a non-suggested destination still
+    // bounces first, evaluated pre-move exactly like the gate below.
+    if (!promotion && this.isPromotionAttempt(from, to)) {
+      const fenNow = this.state.fen();
+      const highlighted = this.highlightFen === fenNow && this.highlightSquares.has(to);
+      const suggestionsLive = this.highlightFen === fenNow && this.highlightSquares.size > 0;
+      if (this.assist === 'full' && !highlighted && suggestionsLive) {
+        this.view.bounceBack(from);
+        this.toast('Only the glowing green moves are allowed on this setting. Pick one of those to finish your turn.');
+        this.refreshUI();
+        return;
+      }
+      this.view.clearSelection();
+      this.view.snapBack(from);
+      this.inputLocked = true;
+      this.view.interactive = false;
+      this.showPromotionPicker(from, to);
+      return;
+    }
+
+    const res = this.state.tryMove(from, to, promotion || 'q');
     if (!res) { this.view.snapBack(from); return; }
 
     // Selection clears, but suggestions stay until the turn completes.
@@ -1108,22 +1211,27 @@ class CentaurApp {
   }
 
   // Commit visuals, network, UI, and the solo opponent's reply.
-  finalizeMove(res) {
+  async finalizeMove(res) {
     const move = res.move;
     // En passant captures a pawn that is NOT on the destination square.
     let capturedSquare = null;
     if (move.captured) {
       capturedSquare = move.flags.includes('e') ? move.to[0] + move.from[1] : move.to;
     }
-    this.view.animateMove(move.from, move.to, capturedSquare);
+    const anims = [this.view.animateMove(move.from, move.to, capturedSquare)];
     // Castling: the rook rides along.
     if (move.flags.includes('k')) {
       const rank = move.from[1];
-      this.view.animateMove('h' + rank, 'f' + rank, null);
+      anims.push(this.view.animateMove('h' + rank, 'f' + rank, null));
     } else if (move.flags.includes('q')) {
       const rank = move.from[1];
-      this.view.animateMove('a' + rank, 'd' + rank, null);
+      anims.push(this.view.animateMove('a' + rank, 'd' + rank, null));
     }
+    await Promise.all(anims);
+    // Re-render from state: the animation carries the old glyph, so a
+    // promotion only becomes visible here. This also resyncs castling
+    // and en passant, so the board can never drift from the rules.
+    this.view.setPieces(this.state.pieces());
 
     this.network.sendMove({ from: move.from, to: move.to, san: move.san, afterFen: res.fenAfter });
     this.highlightFen = null;
@@ -1150,11 +1258,15 @@ class CentaurApp {
     this.inputLocked = false;
     this.view.interactive = true;
     if (!uci || this.state.isGameOver() || this.state.turn() !== 'b') return;
-    const res = this.state.tryMove(uci.slice(0, 2), uci.slice(2, 4));
+    // Stockfish's move string carries the promotion piece (e.g. e7e8q);
+    // pass it through instead of defaulting to queen.
+    const promo = uci.length > 4 ? uci[4] : 'q';
+    const res = this.state.tryMove(uci.slice(0, 2), uci.slice(2, 4), promo);
     if (res) this.finalizeMove(res);
   }
 
   newGame() {
+    this.closePromotionPicker();
     this.state.reset();
     this.view.setPieces(this.state.pieces());
     this.view.clearHighlights();
