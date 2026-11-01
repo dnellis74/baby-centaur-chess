@@ -33,13 +33,9 @@
   </header>
 
   <main class="layout">
-    <!-- Board column: evaluation bar + 2D board -->
+    <!-- Board column: 2D board, evaluation bar below it -->
     <section class="board-column">
       <div class="board-row">
-        <div class="eval-bar" id="eval-bar" title="Evaluation from White's perspective">
-          <div class="eval-fill" id="eval-fill"></div>
-          <span class="eval-label" id="eval-label">+0.0</span>
-        </div>
         <div class="scene-container" id="scene-container">
           <div class="toast" id="toast"></div>
           <div class="promo-picker hidden" id="promo-picker">
@@ -49,6 +45,10 @@
               <div class="promo-note" id="promo-note"></div>
             </div>
           </div>
+        </div>
+        <div class="eval-bar" id="eval-bar" title="Evaluation from White's perspective">
+          <div class="eval-fill" id="eval-fill"></div>
+          <span class="eval-label" id="eval-label">+0.0</span>
         </div>
       </div>
       <p class="hint-text">Drag a piece, or tap it and then tap a glowing green tile. Green tiles and arrows are your partner's top ideas. Pinch to zoom into the board, slide two fingers to look around, double-tap the board to zoom back out. Tap a piece again and the ideas stay.</p>

@@ -66,14 +66,17 @@ body { overflow-x: hidden; }
 
 .board-row {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   align-items: stretch;
 }
 
-/* Vertical evaluation bar: white share grows upward from the bottom. */
+/* Horizontal evaluation bar below the board: white share grows from
+   the left. The board takes the full column width now. */
 .eval-bar {
   position: relative;
-  width: 16px;
+  width: 100%;
+  height: 18px;
   background: #1d232e;
   border: 1px solid #2b3542;
   border-radius: 6px;
@@ -84,22 +87,24 @@ body { overflow-x: hidden; }
 .eval-fill {
   position: absolute;
   left: 0;
-  right: 0;
+  top: 0;
   bottom: 0;
-  height: 50%;
+  width: 50%;
   background: #e8e4d8;
-  transition: height 0.4s ease;
+  transition: width 0.4s ease;
 }
 
 .eval-label {
   position: absolute;
   left: 50%;
-  top: 8px;
-  transform: translateX(-50%) rotate(0deg);
-  writing-mode: vertical-rl;
+  top: 50%;
+  transform: translate(-50%, -50%);
   font-size: 11px;
-  color: #101418;
-  mix-blend-mode: normal;
+  font-weight: 600;
+  color: #e8ecef;
+  background: rgba(16, 20, 24, 0.75);
+  border-radius: 999px;
+  padding: 1px 8px;
   z-index: 1;
 }
 
@@ -158,10 +163,11 @@ body { overflow-x: hidden; }
 
 .piece {
   position: relative;
-  /* About half the square each way, so the square color and the green
-     hint ring stay visible around the piece. */
-  width: 72%;
-  height: 72%;
+  /* The art is normalized to 90% of the square height inside its
+     viewBox, so the element fills the square and the drawing takes up
+     90% top to bottom, faces as large as possible. */
+  width: 100%;
+  height: 100%;
   user-select: none;
   -webkit-user-select: none;
   pointer-events: none; /* hits resolve by square, not by piece art */
@@ -408,7 +414,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 
   .board-column { flex: 1 1 auto; }
   .board-row { gap: 10px; }
-  .eval-bar { width: 22px; }
 
   /* Responsive cap: the board fits the viewport height as well as the
      column width. Without this, max-width: none let the board grow to

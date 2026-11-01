@@ -860,7 +860,7 @@ class CentaurApp {
         this.highlightSquares = new Set();
         this.highlightPairs = [];
         this.el.lines.innerHTML = '<li class="lines-empty">AI assist is off.</li>';
-        this.el.evalFill.style.height = '50%';
+        this.el.evalFill.style.width = '50%';
         this.el.evalLabel.textContent = '—';
       } else {
         this.refreshAnalysis().then(() => this.maybeAutoHint());
@@ -931,7 +931,7 @@ class CentaurApp {
     const best = lines[0];
     const cpWhite = turn === 'w' ? lineScoreCp(best) : -lineScoreCp(best);
     const pct = 100 / (1 + Math.exp(-0.004 * cpWhite));
-    this.el.evalFill.style.height = `${pct}%`;
+    this.el.evalFill.style.width = `${pct}%`;
     this.el.evalLabel.textContent = formatScoreCp(cpWhite);
 
     this.el.lines.innerHTML = '';
@@ -1273,7 +1273,7 @@ class CentaurApp {
     this.inputLocked = false;
     this.view.interactive = true;
     this.el.lines.innerHTML = '<li class="lines-empty">Select a piece or press “Ask partner”.</li>';
-    this.el.evalFill.style.height = '50%';
+    this.el.evalFill.style.width = '50%';
     this.el.evalLabel.textContent = '+0.0';
     this.refreshUI();
     this.refreshAnalysis().then(() => this.maybeAutoHint());

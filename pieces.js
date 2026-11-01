@@ -11,8 +11,10 @@
  *   White team: F white, L black. Black team: F black, L white.
  * So eyes, mouths, teeth, blush, and outlines all flip together, and one
  * definition serves both teams. viewBox is 0 0 100 100 for every piece;
- * bases sit at y 89-92 and tops run king 12, queen 16.5, bishop 22,
- * knight 28, rook 30, pawn 38, keeping the classic height order. */
+ * pieceArt normalizes each drawing to 90% of the square height (a scale
+ * plus translate wrap), so faces are as large as possible on a phone.
+ * That means every piece stands the same height: the classic height
+ * order is intentionally not kept. */
 
 const ART = {
   // King: three-point crown with a cross finial, sleepy content eyes.
@@ -100,9 +102,26 @@ const ART = {
     + `</svg>`,
 };
 
+// Scale + translate that maps each piece's own vertical span onto
+// y 5..95 (90% of the square height), centered horizontally. Derived
+// from each outline's top and bottom: king 12..91.5, queen 16.5..91.5,
+// bishop 22..91.5, knight 28..91.5, rook 30..91.5, pawn 38..92.
+const NORM = {
+  k: 'translate(-6.6 -8.58) scale(1.132)',
+  q: 'translate(-10 -14.8) scale(1.2)',
+  b: 'translate(-14.75 -23.49) scale(1.295)',
+  n: 'translate(-20.85 -34.68) scale(1.417)',
+  r: 'translate(-23.15 -38.89) scale(1.463)',
+  p: 'translate(-33.35 -58.35) scale(1.667)',
+};
+
 // type: 'k' | 'q' | 'r' | 'b' | 'n' | 'p'; color: 'w' | 'b'.
 export function pieceArt(type, color) {
   const F = color === 'w' ? '#ffffff' : '#000000';
   const L = color === 'w' ? '#000000' : '#ffffff';
-  return ART[type](F, L);
+  const svg = ART[type](F, L);
+  return svg
+    .replace('<svg viewBox="0 0 100 100" aria-hidden="true">',
+      `<svg viewBox="0 0 100 100" aria-hidden="true"><g transform="${NORM[type]}">`)
+    .replace('</svg>', '</g></svg>');
 }
