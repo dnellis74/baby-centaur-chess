@@ -16,9 +16,26 @@ html, body {
   font-size: 16px; /* 16px inputs keep mobile browsers from zooming on focus */
 }
 
-body { overflow-x: hidden; }
+body {
+  overflow-x: hidden;
+  /* Full-height column so the board stack can center vertically
+     instead of pooling empty space at the bottom. */
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* Cozy backdrop: faint stars over a warm lamplight glow over a deep
+     blue-charcoal gradient. Pure CSS, no images. */
+  background-color: #101418;
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.10) 1px, transparent 1.6px),
+    radial-gradient(60% 50% at 50% 38%, rgba(232, 185, 60, 0.10), transparent 70%),
+    radial-gradient(120% 90% at 50% 0%, #26344a 0%, #141b26 55%, #0e131b 100%);
+  background-size: 44px 44px, 100% 100%, 100% 100%;
+}
 
 .app-header {
+  flex: 0 0 auto;
   padding: 8px 12px 6px;
   border-bottom: 1px solid #232c38;
 }
@@ -29,12 +46,15 @@ body { overflow-x: hidden; }
   letter-spacing: 0.2px;
 }
 
-/* Base layout: one column — board, score slider, message box. */
+/* Base layout: one column — board, score slider, message box —
+   centered vertically in the space below the header. */
 .layout {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  justify-content: center;
   gap: 14px;
-  padding: 12px 12px 24px;
+  padding: 12px 8px 24px;
 }
 
 .board-column { width: 100%; min-width: 0; }
@@ -125,6 +145,8 @@ body { overflow-x: hidden; }
   border: 1px solid #2b3542;
   border-radius: 10px;
   overflow: hidden;
+  /* Soft table shadow so the board sits on the backdrop, not in it. */
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
 }
 
 /* Tight 2D board: 8x8 grid of squares, SVG monster pieces, and an
