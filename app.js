@@ -16,7 +16,8 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=11';
+import { pieceArt } from './pieces.js?v=12';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED } from './config.js?v=12';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -801,7 +802,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=11');
+    this.engine = new EngineBridge('engine-worker.js?v=12');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -811,13 +812,18 @@ class CentaurApp {
       },
     });
 
-    this.mode = document.getElementById('mode').value; // 'solo' | 'advise'
+    // Options live in config.js, not in the interface (kids' build).
+    this.mode = MODE; // 'solo' | 'advise'
     // Assist dial: 'full' (suggested moves only), 'hints' (no intercept),
     // 'off' (no partner output at all). This is the partner's help level,
     // not the solo opponent — Stockfish still plays Black in solo mode
     // when assist is off. Networked rule (decided 2026-10-30): centaur
     // vs centaur, and either side may start a game with assist at zero.
-    this.assist = document.getElementById('assist').value;
+    this.assist = ASSIST;
+    // Solo-opponent strength: only the Stockfish side in solo mode plays
+    // weaker. Hints and the blunder intercept stay full strength.
+    this.opponent = OPPONENT;
+    this.autoHints = AUTO_HINTS;
     this.inputLocked = false;
     this.cachedAnalysis = null; // { fen, lines } — freshest engine view
     this.highlightFen = null;
@@ -826,78 +832,25 @@ class CentaurApp {
     this.toastTimer = null;
 
     this.el = {
-      status: document.getElementById('status'),
-      lines: document.getElementById('lines'),
-      moves: document.getElementById('moves'),
+      message: document.getElementById('message-text'),
+      playAgain: document.getElementById('play-again'),
       evalFill: document.getElementById('eval-fill'),
       evalLabel: document.getElementById('eval-label'),
       toast: document.getElementById('toast'),
-      engineStatus: document.getElementById('engine-status'),
-      engineText: document.getElementById('engine-text'),
     };
 
-    document.getElementById('btn-new').addEventListener('click', () => this.newGame());
-    document.getElementById('btn-flip').addEventListener('click', () => {
-      this.view.setFlipped(!this.view.flipped);
-      // Flipping wipes overlays; re-show this turn's suggestions.
-      if (this.highlightPairs.length > 0) {
-        this.view.setHighlights(this.highlightPairs.map((p) => p.to));
-        this.view.setArrows(this.highlightPairs);
-      }
-    });
-    document.getElementById('btn-hint').addEventListener('click', () => this.showHint());
-    document.getElementById('mode').addEventListener('change', (e) => {
-      this.mode = e.target.value;
-      // Switching to solo with Black to move hands the turn to Stockfish.
-      if (this.mode === 'solo' && this.state.turn() === 'b' && !this.state.isGameOver()) this.aiReply();
-    });
-    document.getElementById('assist').addEventListener('change', (e) => {
-      this.assist = e.target.value;
-      if (this.assist === 'off') {
-        // Partner goes quiet immediately: no glows, no lines, neutral bar.
-        this.view.clearHighlights();
-        this.highlightFen = null;
-        this.highlightSquares = new Set();
-        this.highlightPairs = [];
-        this.el.lines.innerHTML = '<li class="lines-empty">AI assist is off.</li>';
-        this.el.evalFill.style.width = '50%';
-        this.el.evalLabel.textContent = '—';
-      } else {
-        this.refreshAnalysis().then(() => this.maybeAutoHint());
-      }
-    });
-    // Solo-opponent strength: only the Stockfish side in solo mode plays
-    // weaker. Hints, lines, and the blunder intercept stay full strength.
-    this.opponent = document.getElementById('opponent').value;
-    document.getElementById('opponent').addEventListener('change', (e) => {
-      this.opponent = e.target.value;
-    });
-    // Auto hints are ON by default: the partner asks for hints every turn
-    // without waiting for a selection or the Ask button.
-    this.autoHints = document.getElementById('auto-hints').checked;
-    document.getElementById('auto-hints').addEventListener('change', (e) => {
-      this.autoHints = e.target.checked;
-      if (this.autoHints) this.maybeAutoHint();
-      else {
-        this.view.clearHighlights();
-        this.highlightFen = null;
-        this.highlightSquares = new Set();
-        this.highlightPairs = [];
-      }
-    });
+    document.getElementById('play-again').addEventListener('click', () => this.newGame());
+    if (FLIPPED) this.view.setFlipped(true);
+    if (this.assist === 'off') this.el.evalLabel.textContent = '—';
   }
 
   async start() {
     await this.network.connect();
     const engineOk = await this.engine.init();
-    this.el.engineStatus.classList.toggle('ready', engineOk);
-    this.el.engineStatus.classList.toggle('failed', !engineOk);
-    this.el.engineText.textContent = engineOk
-      ? `Partner ready — Stockfish, depth ${CONFIG.ENGINE_DEPTH}, MultiPV ${CONFIG.ENGINE_MULTIPV}`
-      : 'Partner unavailable (engine failed to load) — playing without hints';
+    if (!engineOk) this.toast('Partner unavailable (engine failed to load) — playing without hints');
     this.view.setPieces(this.state.pieces());
     this.refreshUI();
-    // Background analysis fills eval bar + lines panel, then auto hints
+    // Background analysis fills eval bar, then auto hints
     // show the partner's ideas for the side to move.
     this.refreshAnalysis().then(() => this.maybeAutoHint());
   }
@@ -912,19 +865,12 @@ class CentaurApp {
   }
 
   refreshUI() {
-    this.el.status.textContent = this.state.statusText();
+    this.el.message.textContent = this.state.statusText();
+    this.el.playAgain.classList.toggle('hidden', !this.state.isGameOver());
     this.view.turn = this.state.turn();
-    const history = this.state.history();
-    this.el.moves.innerHTML = '';
-    for (let i = 0; i < history.length; i += 2) {
-      const li = document.createElement('li');
-      li.textContent = `${i / 2 + 1}. ${history[i].san}${history[i + 1] ? ' ' + history[i + 1].san : ''}`;
-      this.el.moves.appendChild(li);
-    }
-    this.el.moves.scrollTop = this.el.moves.scrollHeight;
   }
 
-  // White-perspective score -> eval bar + lines panel.
+  // White-perspective score -> eval bar.
   renderAnalysis(lines) {
     if (!lines.length) return;
     const turn = this.state.turn();
@@ -933,21 +879,10 @@ class CentaurApp {
     const pct = 100 / (1 + Math.exp(-0.004 * cpWhite));
     this.el.evalFill.style.width = `${pct}%`;
     this.el.evalLabel.textContent = formatScoreCp(cpWhite);
-
-    this.el.lines.innerHTML = '';
-    for (const line of lines) {
-      const from = line.pv[0].slice(0, 2);
-      const to = line.pv[0].slice(2, 4);
-      const san = (this.state.legalMovesFrom(from).find((m) => m.to === to) || {}).san || line.pv[0];
-      const cpLineWhite = turn === 'w' ? lineScoreCp(line) : -lineScoreCp(line);
-      const li = document.createElement('li');
-      li.innerHTML = `<b>${san}</b> (${formatScoreCp(cpLineWhite)}) <span style="color:#9aa7b5">${line.pv.join(' ')}</span>`;
-      this.el.lines.appendChild(li);
-    }
   }
 
   // Background analysis of the current position: refreshes the cached
-  // best score (used by blunder math) and the eval/lines panels. Never
+  // best score (used by blunder math) and the eval bar. Never
   // touches highlights — those belong to a selection or an Ask.
   async refreshAnalysis() {
     if (this.assist === 'off') return; // no engine calls for partner output
@@ -986,7 +921,7 @@ class CentaurApp {
     return this.mode === 'advise' || this.state.turn() === 'w';
   }
 
-  // Auto hints: same as Ask partner, but silent and automatic. Runs at
+  // Auto hints: partner hints, silent and automatic. Runs at
   // game start and after every move, for human turns only. Reuses the
   // cached analysis when it matches the current position.
   async maybeAutoHint() {
@@ -1034,26 +969,6 @@ class CentaurApp {
       this.view.setHighlights(pairs.map((p) => p.to));
       this.view.setArrows(pairs);
     }
-  }
-
-  async showHint() {
-    if (this.inputLocked || this.state.isGameOver()) return;
-    if (this.assist === 'off') {
-      this.toast('AI assist is off. Turn it up to get partner hints.');
-      return;
-    }
-    const fen = this.state.fen();
-    const lines = await this.engine.analyze(fen);
-    if (this.state.fen() !== fen || !lines.length) return;
-    this.cachedAnalysis = { fen, lines };
-    this.renderAnalysis(lines);
-    const pairs = this.pickHighlightDestinations(lines, null);
-    this.highlightFen = fen;
-    this.highlightSquares = new Set(pairs.map((p) => p.to));
-    this.highlightPairs = pairs;
-    this.view.setHighlights(pairs.map((p) => p.to));
-    this.view.setArrows(pairs);
-    this.toast("Your partner's top ideas are glowing green.");
   }
 
   /* Move resolution -------------------------------------------------- */
@@ -1272,9 +1187,8 @@ class CentaurApp {
     this.highlightPairs = [];
     this.inputLocked = false;
     this.view.interactive = true;
-    this.el.lines.innerHTML = '<li class="lines-empty">Select a piece or press “Ask partner”.</li>';
     this.el.evalFill.style.width = '50%';
-    this.el.evalLabel.textContent = '+0.0';
+    this.el.evalLabel.textContent = this.assist === 'off' ? '—' : '+0.0';
     this.refreshUI();
     this.refreshAnalysis().then(() => this.maybeAutoHint());
   }

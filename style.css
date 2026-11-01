@@ -1,9 +1,9 @@
-/* Baby Centaur Chess — Phase 1 styles.
-   Phone-first: the base styles ARE the small-screen layout (single
-   column, full-width board, 44px touch targets). Wider screens add room
-   via min-width queries (row layout, fixed sidebar). Dark, cozy
-   board-room theme. Pastel green (#b7e4a8) is reserved for partner
-   highlights so it always reads as "the AI agrees". */
+/* Baby Centaur Chess — kids' build styles.
+   Phone-first: the base styles ARE the small-screen layout (small
+   title, full-width board, score slider, message box). Wider screens
+   only let the board grow taller. Dark, cozy board-room theme. Pastel
+   green (#b7e4a8) is reserved for partner highlights so it always
+   reads as "the AI agrees". */
 
 * { box-sizing: border-box; }
 
@@ -19,42 +19,17 @@ html, body {
 body { overflow-x: hidden; }
 
 .app-header {
-  padding: 12px 12px 8px;
+  padding: 8px 12px 6px;
   border-bottom: 1px solid #232c38;
 }
 
 .app-header h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 18px;
   letter-spacing: 0.2px;
 }
 
-.tagline {
-  margin: 4px 0 8px;
-  color: #9aa7b5;
-  font-size: 13px;
-}
-
-.engine-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: #9aa7b5;
-}
-
-.engine-status .dot {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #e8b93c; /* warming up */
-}
-
-.engine-status.ready .dot { background: #9ed49a; }
-.engine-status.failed .dot { background: #e06c5a; }
-
-/* Base layout: one column, board on top, controls below. */
+/* Base layout: one column — board, score slider, message box. */
 .layout {
   display: flex;
   flex-direction: column;
@@ -107,6 +82,37 @@ body { overflow-x: hidden; }
   padding: 1px 8px;
   z-index: 1;
 }
+
+/* Message box below the slider: the one place game messages live
+   ("White to move", "Checkmate! Black wins"). On game over it also
+   offers the next game. */
+.message-box {
+  background: #1a212b;
+  border: 1px solid #2b3542;
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: center;
+}
+
+.message-text {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.play-again-btn {
+  font: inherit;
+  color: #e8ecef;
+  background: #232c38;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  padding: 12px 20px;
+  min-height: 44px; /* comfortable touch target */
+  margin-top: 10px;
+  cursor: pointer;
+}
+.play-again-btn:hover { background: #2c3847; }
+.play-again-btn.hidden { display: none; }
 
 .scene-container {
   position: relative;
@@ -292,143 +298,31 @@ body { overflow-x: hidden; }
   color: #9aa7b5;
 }
 
-.hint-text {
-  color: #9aa7b5;
-  font-size: 13px;
-  margin: 10px 0 0;
-}
-
-.sidebar {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.panel {
-  background: #1a212b;
-  border: 1px solid #2b3542;
-  border-radius: 10px;
-  padding: 12px 14px;
-}
-
-.panel h2 {
-  margin: 0 0 8px;
-  font-size: 15px;
-}
-
-.panel-note {
-  margin: 0 0 8px;
-  color: #9aa7b5;
-  font-size: 12px;
-}
-
-.status {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 12px;
-}
-
-.field-label {
-  display: block;
-  font-size: 12px;
-  color: #9aa7b5;
-  margin-bottom: 4px;
-}
-
-.check-label {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 13px;
-  color: #9aa7b5;
-  margin-bottom: 10px;
-  min-height: 32px;
-}
-
-.check-label input { width: 18px; height: 18px; }
-
-select, button {
-  font: inherit;
-  color: #e8ecef;
-  background: #232c38;
-  border: 1px solid #35404e;
-  border-radius: 8px;
-  padding: 12px 10px;
-  min-height: 44px; /* comfortable touch target */
-}
-
-select { width: 100%; margin-bottom: 10px; }
-
-button { cursor: pointer; }
-button:hover { background: #2c3847; }
-button:disabled { opacity: 0.5; cursor: default; }
-
-.button-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.button-row button {
-  flex: 1 1 0;
-  padding: 12px 6px;
-  font-size: 15px;
-  text-align: center;
-}
-
-.lines, .moves {
-  margin: 0;
-  padding-left: 20px;
-  font-size: 14px;
-}
-
-.lines li, .moves li { margin-bottom: 6px; }
-.lines-empty { color: #9aa7b5; list-style: none; margin-left: -20px; }
-
-.moves {
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-/* Short landscape phones: keep the board from pushing the controls
-   a long scroll down the page. */
+/* Short landscape phones: keep the board from pushing the slider and
+   message box a long scroll down the page. */
 @media (max-height: 500px) {
-  .scene-container { max-width: calc(100dvh - 120px); }
+  .scene-container { max-width: calc(100dvh - 160px); }
 }
 
-/* Wider screens: board and sidebar side by side, board fills its column. */
+/* Wider screens: the board fills its column and fits the viewport
+   height too. */
 @media (min-width: 900px) {
-  .app-header { padding: 16px 24px 8px; }
-  .app-header h1 { font-size: 26px; }
-  .tagline { font-size: 14px; }
+  .app-header { padding: 12px 24px 6px; }
 
   .layout {
-    flex-direction: row;
-    gap: 20px;
     padding: 16px 24px 24px;
-    align-items: flex-start;
     max-width: 1600px;
     margin-inline: auto;
   }
 
-  .board-column { flex: 1 1 auto; }
   .board-row { gap: 10px; }
 
   /* Responsive cap: the board fits the viewport height as well as the
-     column width. Without this, max-width: none let the board grow to
-     the full column width on wide monitors (1500px+ tall), so the first
-     screen showed nothing but board. The 220px budget covers the header,
-     layout padding, and the hint line under the board. */
+     column width. Without this, the board grew to the full column width
+     on wide monitors (1500px+ tall), so the first screen showed nothing
+     but board. The 170px budget covers the header, layout padding, the
+     slider, and the message box. */
   .scene-container {
-    max-width: min(100%, calc(100dvh - 220px));
+    max-width: min(100%, calc(100dvh - 170px));
   }
-
-  .sidebar {
-    flex: 0 0 320px;
-    width: auto;
-    gap: 16px;
-  }
-
-  .panel { padding: 14px 16px; }
 }

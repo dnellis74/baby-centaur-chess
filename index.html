@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Baby Centaur Chess</title>
-  <link rel="stylesheet" href="style.css?v=11" />
+  <link rel="stylesheet" href="style.css?v=12" />
 
   <!--
     No build step. This page uses ES modules + import maps, which require
@@ -25,15 +25,9 @@
 <body>
   <header class="app-header">
     <h1>Baby Centaur Chess</h1>
-    <p class="tagline">You and your AI partner, playing as one centaur. Stress-free. No blunders slip through.</p>
-    <div class="engine-status" id="engine-status">
-      <span class="dot" id="engine-dot"></span>
-      <span id="engine-text">Partner warming up…</span>
-    </div>
   </header>
 
   <main class="layout">
-    <!-- Board column: 2D board, evaluation bar below it -->
     <section class="board-column">
       <div class="board-row">
         <div class="scene-container" id="scene-container">
@@ -50,55 +44,14 @@
           <div class="eval-fill" id="eval-fill"></div>
           <span class="eval-label" id="eval-label">+0.0</span>
         </div>
-      </div>
-      <p class="hint-text">Drag a piece, or tap it and then tap a glowing green tile. Green tiles and arrows are your partner's top ideas. Pinch to zoom into the board, slide two fingers to look around, double-tap the board to zoom back out. Tap a piece again and the ideas stay.</p>
-    </section>
-
-    <!-- Sidebar: game state, partner lines, controls -->
-    <aside class="sidebar">
-      <div class="panel">
-        <h2>Status</h2>
-        <p class="status" id="status">White to move</p>
-        <label class="field-label" for="mode">Mode</label>
-        <select id="mode">
-          <option value="solo" selected>Solo vs Stockfish (you play White)</option>
-          <option value="advise">Partner advises both sides</option>
-        </select>
-        <label class="field-label" for="assist">AI assist</label>
-        <select id="assist">
-          <option value="full" selected>Full — suggested moves only</option>
-          <option value="hints">Hints only — no intercept</option>
-          <option value="off">Off — pure human chess</option>
-        </select>
-        <label class="field-label" for="opponent">Solo opponent</label>
-        <select id="opponent">
-          <option value="gentle" selected>Gentle — easier, makes mistakes</option>
-          <option value="friendly">Friendly — a bit stronger</option>
-          <option value="full">Full strength — Stockfish at depth 9</option>
-        </select>
-        <label class="check-label"><input type="checkbox" id="auto-hints" checked> Auto hints each turn</label>
-        <div class="button-row">
-          <button id="btn-new" type="button">New game</button>
-          <button id="btn-flip" type="button">Flip board</button>
-          <button id="btn-hint" type="button">Ask partner</button>
+        <div class="message-box">
+          <p class="message-text" id="message-text">White to move</p>
+          <button class="play-again-btn hidden" id="play-again" type="button">Play again</button>
         </div>
       </div>
-
-      <div class="panel">
-        <h2>Partner's top lines</h2>
-        <p class="panel-note">Top 3 Stockfish lines (depth 9, MultiPV 3). Scores are pawns, White's perspective.</p>
-        <ol class="lines" id="lines">
-          <li class="lines-empty">Select a piece or press “Ask partner”.</li>
-        </ol>
-      </div>
-
-      <div class="panel">
-        <h2>Moves</h2>
-        <ol class="moves" id="moves"></ol>
-      </div>
-    </aside>
+    </section>
   </main>
 
-  <script type="module" src="app.js?v=11"></script>
+  <script type="module" src="app.js?v=12"></script>
 </body>
 </html>
