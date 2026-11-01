@@ -134,6 +134,52 @@ body {
 .play-again-btn:hover { background: #2c3847; }
 .play-again-btn.hidden { display: none; }
 
+/* Captured tray below the message box: one row per side, same monster
+   art as the board. Rows keep their height when empty so the box never
+   jumps as pieces are taken. */
+.captured-box {
+  background: #1a212b;
+  border: 1px solid #2b3542;
+  border-radius: 10px;
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.captured-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.captured-label {
+  flex: 0 0 auto;
+  width: 72px;
+  font-size: 12px;
+  color: #9aa7b5;
+}
+
+.captured-icons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+}
+
+.captured-piece {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+}
+
+.captured-piece svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .scene-container {
   position: relative;
   flex: 1 1 auto;
@@ -342,9 +388,9 @@ body {
   /* Responsive cap: the board fits the viewport height as well as the
      column width. Without this, the board grew to the full column width
      on wide monitors (1500px+ tall), so the first screen showed nothing
-     but board. The 170px budget covers the header, layout padding, the
-     slider, and the message box. */
+     but board. The 260px budget covers the header, layout padding, the
+     slider, the message box, and the captured tray. */
   .scene-container {
-    max-width: min(100%, calc(100dvh - 170px));
+    max-width: min(100%, calc(100dvh - 260px));
   }
 }

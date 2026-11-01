@@ -16,8 +16,8 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=13';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED } from './config.js?v=13';
+import { pieceArt } from './pieces.js?v=14';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED } from './config.js?v=14';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -802,7 +802,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=13');
+    this.engine = new EngineBridge('engine-worker.js?v=14');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -834,6 +834,8 @@ class CentaurApp {
     this.el = {
       message: document.getElementById('message-text'),
       playAgain: document.getElementById('play-again'),
+      capturedByWhite: document.getElementById('captured-by-white'),
+      capturedByBlack: document.getElementById('captured-by-black'),
       evalFill: document.getElementById('eval-fill'),
       evalLabel: document.getElementById('eval-label'),
       toast: document.getElementById('toast'),
@@ -868,6 +870,19 @@ class CentaurApp {
     this.el.message.textContent = this.state.statusText();
     this.el.playAgain.classList.toggle('hidden', !this.state.isGameOver());
     this.view.turn = this.state.turn();
+    // Captured tray: pieces each side has taken, strongest first.
+    // chess.js verbose history marks every capture, en passant included.
+    const byWhite = [];
+    const byBlack = [];
+    for (const m of this.state.history()) {
+      if (m.captured) (m.color === 'w' ? byWhite : byBlack).push(m.captured);
+    }
+    const order = { q: 0, r: 1, b: 2, n: 3, p: 4 };
+    byWhite.sort((a, b) => order[a] - order[b]);
+    byBlack.sort((a, b) => order[a] - order[b]);
+    // White's captures are black pieces, and vice versa.
+    this.el.capturedByWhite.innerHTML = byWhite.map((t) => `<span class="captured-piece">${pieceArt(t, 'b')}</span>`).join('');
+    this.el.capturedByBlack.innerHTML = byBlack.map((t) => `<span class="captured-piece">${pieceArt(t, 'w')}</span>`).join('');
   }
 
   // White-perspective score -> eval bar.
