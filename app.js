@@ -2,9 +2,8 @@
    Baby Centaur Chess — Phase 1 application
    ---------------------------------------------------------------------
    Architecture (state is fully decoupled from rendering):
-     GameStateManager  — chess rules only (wraps chess.js). No Three.js.
-     PieceModelFactory — builds 3D piece meshes. Swappable for glTF later.
-     BoardView         — Three.js scene, input, highlights, animation.
+     GameStateManager  — chess rules only (wraps chess.js).
+     BoardView         — tight 2D DOM board, input, highlights, arrows.
      EngineBridge      — UCI conversation with engine-worker.js.
      NetworkSyncBridge — abstract network seam. Phase 1 = local mock.
      CentaurApp        — wires the above together. Owns no chess rules
@@ -16,7 +15,6 @@
      is the single place a move leaves this machine.
    ===================================================================== */
 
-import * as THREE from 'three';
 import { Chess } from 'chess.js';
 
 /* ------------------------------------------------------------------ */
@@ -170,87 +168,21 @@ class GameStateManager extends Emitter {
 }
 
 /* ------------------------------------------------------------------ */
-/* PieceModelFactory — Phase 2 seam                                    */
+/* BoardView — tight 2D DOM board (no canvas, no WebGL)                 */
 /* ------------------------------------------------------------------ */
-/* Phase 1 returns rounded cartoon placeholders: capsule body, sphere
-   head, painted eyes and rosy cheeks. Phase 2 keeps this exact API and
-   swaps the body for loaded glTF/OBJ models (chibi animals/monsters):
-     const group = await PieceModelFactory.createPiece(type, color)
-   Every mesh gets castShadow; the group carries userData { type, color,
-   square } so BoardView raycasting can resolve a hit to a piece. */
+/* Renders 64 square divs in a grid, Unicode glyph pieces, and an SVG
+   overlay for arrows. The view owns no rules: it reports taps and drops
+   through callbacks and paints what CentaurApp tells it, through the
+   same seam the 3D view used:
+     setPieces, setHighlights, setArrows, clearHighlights, setSelected,
+     clearSelection, setFlipped, animateMove, bounceBack, snapBack.
+   Square colors stay attached to squares when flipped (a1 is dark):
+   color comes from file+rank parity, never from display position. */
 
-class PieceModelFactory {
-  // Per-type proportions + head topper, so placeholders stay readable.
-  static SPECS = {
-    p: { bodyR: 0.24, bodyLen: 0.22, headR: 0.26, topper: null },
-    r: { bodyR: 0.28, bodyLen: 0.32, headR: 0.30, topper: 'rook' },
-    n: { bodyR: 0.28, bodyLen: 0.36, headR: 0.30, topper: 'knight' },
-    b: { bodyR: 0.28, bodyLen: 0.44, headR: 0.30, topper: 'bishop' },
-    q: { bodyR: 0.30, bodyLen: 0.52, headR: 0.32, topper: 'queen' },
-    k: { bodyR: 0.30, bodyLen: 0.56, headR: 0.32, topper: 'king' },
-  };
-
-  static createPiece(type, color) {
-    const spec = this.SPECS[type];
-    const isWhite = color === 'w';
-    const group = new THREE.Group();
-
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: isWhite ? 0xfdf3e3 : 0x3a4756, roughness: 0.55,
-    });
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0x1c2530, roughness: 0.4 });
-    const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-    const cheekMat = new THREE.MeshStandardMaterial({ color: 0xffb3c1, roughness: 0.7 });
-    const goldMat = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.35, metalness: 0.4 });
-
-    const add = (mesh, x, y, z) => { mesh.position.set(x, y, z); mesh.castShadow = true; group.add(mesh); return mesh; };
-
-    // Base disc so the piece reads as a game piece, not a blob.
-    add(new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.38, 0.08, 24), bodyMat), 0, 0.04, 0);
-    // Rounded capsule body.
-    add(new THREE.Mesh(new THREE.CapsuleGeometry(spec.bodyR, spec.bodyLen, 6, 16), bodyMat),
-      0, 0.08 + spec.bodyR + spec.bodyLen / 2, 0);
-    // Sphere head.
-    const headY = 0.08 + spec.bodyR * 2 + spec.bodyLen + spec.headR * 0.55;
-    add(new THREE.Mesh(new THREE.SphereGeometry(spec.headR, 24, 18), bodyMat), 0, headY, 0);
-    // Cartoon eyes (white + pupil) and rosy cheeks, facing +z.
-    for (const side of [-1, 1]) {
-      add(new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 10), whiteMat),
-        side * 0.11, headY + 0.06, spec.headR * 0.86);
-      add(new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), darkMat),
-        side * 0.11, headY + 0.06, spec.headR * 0.86 + 0.05);
-      const cheek = add(new THREE.Mesh(new THREE.SphereGeometry(0.06, 10, 8), cheekMat),
-        side * 0.20, headY - 0.06, spec.headR * 0.78);
-      cheek.scale.set(1, 0.6, 0.5);
-    }
-    // Type toppers: silhouettes stay distinguishable at a glance.
-    const topY = headY + spec.headR * 0.9;
-    if (spec.topper === 'king' || spec.topper === 'queen') {
-      add(new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.22, 16), goldMat), 0, topY + 0.08, 0);
-      if (spec.topper === 'queen') add(new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), goldMat), 0, topY + 0.22, 0);
-    } else if (spec.topper === 'rook') {
-      add(new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.12, 16), bodyMat), 0, topY + 0.03, 0);
-      for (const [dx, dz] of [[-0.13, 0], [0.13, 0], [0, -0.13], [0, 0.13]]) {
-        add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), bodyMat), dx, topY + 0.12, dz);
-      }
-    } else if (spec.topper === 'bishop') {
-      const mitre = add(new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.26, 16), bodyMat), 0, topY + 0.10, 0);
-      mitre.rotation.z = 0.25;
-    } else if (spec.topper === 'knight') {
-      add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.12, 0.22), bodyMat), 0, headY - 0.02, spec.headR * 0.85);
-      for (const side of [-1, 1]) {
-        add(new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.14, 8), bodyMat), side * 0.12, topY + 0.02, 0);
-      }
-    }
-
-    group.userData = { type, color, square: null };
-    return group;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/* BoardView — Three.js scene, input, highlights, animation            */
-/* ------------------------------------------------------------------ */
+const GLYPHS = {
+  w: { k: '♔', q: '♕', r: '♖', b: '♗', n: '♘', p: '♙' },
+  b: { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' },
+};
 
 class BoardView {
   constructor(container, callbacks) {
@@ -260,290 +192,278 @@ class BoardView {
     this.turn = 'w';
     this.interactive = true;
 
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x171d27);
+    // Zoomable board element. The toast stays a sibling in the
+    // container so it never scales with the board.
+    this.boardEl = document.createElement('div');
+    this.boardEl.className = 'board-2d';
+    container.appendChild(this.boardEl);
 
-    // Slightly top-down perspective: board reads as 3D, pieces stay clear.
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100);
-    // View state for pinch zoom: a fixed viewing direction, a look-at
-    // target that pans with two fingers, and a distance that pinches in
-    // and out. The default distance shows the whole board.
-    this.viewDir = new THREE.Vector3(0, 11.5, 8.5).normalize();
-    this.viewTarget = new THREE.Vector3(0, 0, 0);
-    this.viewDistDefault = new THREE.Vector3(0, 11.5, 8.5).length();
-    this.viewDist = this.viewDistDefault;
-    this.viewDistMin = 6.5;
-    this.updateCamera();
+    this.squaresEl = document.createElement('div');
+    this.squaresEl.className = 'squares';
+    this.boardEl.appendChild(this.squaresEl);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    container.appendChild(this.renderer.domElement);
+    // SVG overlay for arrows (800x800 viewBox = 100 units per square).
+    this.arrowSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    this.arrowSvg.setAttribute('class', 'arrows');
+    this.arrowSvg.setAttribute('viewBox', '0 0 800 800');
+    this.arrowSvg.setAttribute('aria-hidden', 'true');
+    this.boardEl.appendChild(this.arrowSvg);
 
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-    sun.position.set(5, 12, 6);
-    sun.castShadow = true;
-    sun.shadow.camera.left = -7; sun.shadow.camera.right = 7;
-    sun.shadow.camera.top = 7; sun.shadow.camera.bottom = -7;
-    this.scene.add(sun);
-
-    this.buildBoard();
-    this.pieceGroups = new Map(); // square -> Group
-
-    // Highlight overlays (shared pastel-green material, pulsed in animate).
-    this.highlightMat = new THREE.MeshStandardMaterial({
-      color: 0xb7e4a8, emissive: 0x86c06c, emissiveIntensity: 0.8,
-      transparent: true, opacity: 0.85,
-    });
-    // Glowing green arrows: one per highlighted destination, arcing from
-    // the moving piece to its suggested destination tile.
-    this.arrowMat = new THREE.MeshBasicMaterial({ color: 0x7ed957, transparent: true, opacity: 0.9 });
-    this.arrows = [];
-    this.highlights = new Map(); // square -> Mesh
-    this.selectMat = new THREE.MeshStandardMaterial({
-      color: 0xa8c8e8, emissive: 0x5a8ac0, emissiveIntensity: 0.7,
-      transparent: true, opacity: 0.7,
-    });
-    this.selectMesh = null;
-
-    this.raycaster = new THREE.Raycaster();
-    this.pointer = new THREE.Vector2();
-    this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    this.cells = new Map();     // square -> cell element
+    this.pieceData = new Map(); // square -> { type, color }
+    this.pieceEls = new Map();  // square -> piece element
+    this.highlightSet = new Set();
+    this.arrowPairs = [];
     this.selectedSquare = null;
-    this.dragged = null; // { square, group }
+    this.dragged = null; // { square, el, startX, startY }
     this.pointers = new Map(); // pointerId -> { x, y } client coords
     this.pinch = null; // { prevDist, prevMid } while two fingers are down
+    this.zoom = { scale: 1, tx: 0, ty: 0 };
     this.downInfo = null; // { time, x, y, hitPiece } for tap detection
     this.lastTap = null; // { time, x, y } for double-tap-to-reset
-    this.tweens = [];
-    this.scalers = [];
-    this.clock = new THREE.Clock();
 
-    this.resize();
-    window.addEventListener('resize', () => this.resize());
-    // The board's size follows its container, which changes on rotation,
-    // browser resize, and layout shifts — watch the container directly
-    // so the canvas never lags behind the responsive layout.
-    if (typeof ResizeObserver !== 'undefined') {
-      this.resizeObserver = new ResizeObserver(() => this.resize());
-      this.resizeObserver.observe(container);
-    }
+    this.buildCells();
     this.bindInput();
-    this.animate();
   }
 
-  /* Coordinates. Board spans x,z in [-4, 4]; rank 1 is near the camera
-     (z = +3.5) when not flipped. Flipping negates both axes. */
-  squareToPos(file, rank) {
-    let x = file - 3.5;
-    let z = 3.5 - rank;
-    if (this.flipped) { x = -x; z = -z; }
-    return { x, z };
+  /* Coordinates. Display row 0 is the top of the screen: rank 8 when
+     not flipped, rank 1 when flipped. Display col 0 is the left. */
+  displayPos(square) {
+    const file = FILES.indexOf(square[0]);
+    const rank = parseInt(square[1], 10) - 1;
+    return this.flipped
+      ? { col: 7 - file, row: rank }
+      : { col: file, row: 7 - rank };
   }
 
-  posToSquare(x, z) {
-    if (this.flipped) { x = -x; z = -z; }
-    const file = Math.round(x + 3.5);
-    const rank = Math.round(3.5 - z);
-    if (file < 0 || file > 7 || rank < 0 || rank > 7) return null;
-    return squareName(file, rank);
+  squareFromDisplay(col, row) {
+    if (this.flipped) return FILES[7 - col] + (row + 1);
+    return FILES[col] + (8 - row);
   }
 
-  buildBoard() {
-    this.tileGroup = new THREE.Group();
-    const lightMat = new THREE.MeshStandardMaterial({ color: 0xf0d9b5, roughness: 0.8 });
-    const darkMat = new THREE.MeshStandardMaterial({ color: 0xb58863, roughness: 0.8 });
-    const geo = new THREE.BoxGeometry(0.96, 0.2, 0.96);
-    for (let file = 0; file < 8; file++) {
-      for (let rank = 0; rank < 8; rank++) {
-        const tile = new THREE.Mesh(geo, (file + rank) % 2 === 0 ? darkMat : lightMat);
-        const { x, z } = this.squareToPos(file, rank);
-        tile.position.set(x, 0, z);
-        tile.receiveShadow = true;
-        tile.userData.square = squareName(file, rank);
-        this.tileGroup.add(tile);
+  // Client coords -> square. Uses the transformed bounding rect, so
+  // hit-testing stays correct under pinch zoom and pan.
+  squareFromClient(x, y) {
+    const rect = this.boardEl.getBoundingClientRect();
+    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return null;
+    const col = Math.min(7, Math.floor((x - rect.left) / rect.width * 8));
+    const row = Math.min(7, Math.floor((y - rect.top) / rect.height * 8));
+    return this.squareFromDisplay(col, row);
+  }
+
+  buildCells() {
+    this.squaresEl.innerHTML = '';
+    this.cells.clear();
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const square = this.squareFromDisplay(col, row);
+        const file = FILES.indexOf(square[0]);
+        const rank = parseInt(square[1], 10) - 1;
+        const cell = document.createElement('div');
+        cell.className = 'square ' + ((file + rank) % 2 === 0 ? 'dark' : 'light');
+        cell.dataset.square = square;
+        this.squaresEl.appendChild(cell);
+        this.cells.set(square, cell);
       }
     }
-    this.scene.add(this.tileGroup);
+    this.applyHighlights();
+    this.applySelection();
   }
 
-  repositionAll() {
-    // Tiles keep their colors on flip: (file+rank) parity is preserved
-    // because flipping maps (f, r) -> (7-f, 7-r), a sum shift of 14.
-    for (const tile of this.tileGroup.children) {
-      const sq = tile.userData.square;
-      const file = FILES.indexOf(sq[0]);
-      const rank = parseInt(sq[1], 10) - 1;
-      const { x, z } = this.squareToPos(file, rank);
-      tile.position.set(x, 0, z);
+  placePieces() {
+    this.pieceEls.forEach((el) => el.remove());
+    this.pieceEls.clear();
+    for (const [square, piece] of this.pieceData) {
+      const cell = this.cells.get(square);
+      if (!cell) continue;
+      const el = document.createElement('div');
+      el.className = 'piece ' + (piece.color === 'w' ? 'white' : 'black');
+      el.textContent = GLYPHS[piece.color][piece.type];
+      el.dataset.square = square;
+      cell.appendChild(el);
+      this.pieceEls.set(square, el);
     }
-    for (const [sq, group] of this.pieceGroups) {
-      const { x, z } = this.squareToPos(FILES.indexOf(sq[0]), parseInt(sq[1], 10) - 1);
-      group.position.set(x, 0.1, z);
+  }
+
+  applyHighlights() {
+    for (const [square, cell] of this.cells) {
+      cell.classList.toggle('highlight', this.highlightSet.has(square));
     }
+  }
+
+  applySelection() {
+    for (const [square, cell] of this.cells) {
+      cell.classList.toggle('selected', square === this.selectedSquare);
+    }
+  }
+
+  setFlipped(flipped) {
+    this.flipped = flipped;
+    this.buildCells();
+    this.placePieces();
     this.clearHighlights();
     this.clearSelection();
   }
 
-  setFlipped(flipped) { this.flipped = flipped; this.repositionAll(); }
-
   /* Pieces */
   setPieces(pieces) {
-    for (const g of this.pieceGroups.values()) this.scene.remove(g);
-    this.pieceGroups.clear();
-    for (const p of pieces) {
-      const group = PieceModelFactory.createPiece(p.type, p.color);
-      const { x, z } = this.squareToPos(FILES.indexOf(p.square[0]), parseInt(p.square[1], 10) - 1);
-      group.position.set(x, 0.1, z);
-      group.userData.square = p.square;
-      this.scene.add(group);
-      this.pieceGroups.set(p.square, group);
-    }
+    this.pieceData.clear();
+    for (const p of pieces) this.pieceData.set(p.square, { type: p.type, color: p.color });
+    this.placePieces();
   }
-
-  pieceAt(square) { return this.pieceGroups.get(square) || null; }
 
   /* Highlights: at most 3 pastel-green tiles, plus a blue selection tile. */
   setHighlights(squares) {
     this.clearHighlights();
-    for (const sq of squares.slice(0, 3)) {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.94, 0.94), this.highlightMat);
-      mesh.rotation.x = -Math.PI / 2;
-      const { x, z } = this.squareToPos(FILES.indexOf(sq[0]), parseInt(sq[1], 10) - 1);
-      mesh.position.set(x, 0.115, z);
-      this.scene.add(mesh);
-      this.highlights.set(sq, mesh);
-    }
+    this.highlightSet = new Set(squares.slice(0, 3));
+    this.applyHighlights();
   }
 
   clearHighlights() {
-    for (const m of this.highlights.values()) this.scene.remove(m);
-    this.highlights.clear();
+    this.highlightSet.clear();
+    this.applyHighlights();
     this.clearArrows();
   }
 
-  // One arcing arrow per (from, to) pair. The arc peaks above the pieces
-  // so the arrow reads clearly instead of clipping through them.
+  // One straight arrow per (from, to) pair, from the moving piece's
+  // square to its suggested destination.
   setArrows(pairs) {
     this.clearArrows();
-    const up = new THREE.Vector3(0, 1, 0);
-    for (const { from, to } of pairs) {
-      if (from === to) continue;
-      const a = this.squareToPos(FILES.indexOf(from[0]), parseInt(from[1], 10) - 1);
-      const b = this.squareToPos(FILES.indexOf(to[0]), parseInt(to[1], 10) - 1);
-      const start = new THREE.Vector3(a.x, 0.25, a.z);
-      const end = new THREE.Vector3(b.x, 0.25, b.z);
-      const dist = start.distanceTo(end);
-      if (dist < 0.5) continue;
-      const mid = start.clone().lerp(end, 0.5);
-      mid.y = 0.25 + Math.min(1.6, 0.6 + dist * 0.35);
-      const curve = new THREE.QuadraticBezierCurve3(start, mid, end);
-      const tube = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.045, 8, false), this.arrowMat);
-      const tangent = curve.getTangent(1).normalize();
-      const coneH = 0.42;
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.17, coneH, 14), this.arrowMat);
-      cone.quaternion.setFromUnitVectors(up, tangent);
-      cone.position.copy(end).addScaledVector(tangent, -coneH / 2 + 0.05);
-      const group = new THREE.Group();
-      group.add(tube, cone);
-      this.scene.add(group);
-      this.arrows.push(group);
-    }
+    this.arrowPairs = pairs.filter((p) => p.from !== p.to);
+    this.drawArrows();
   }
 
   clearArrows() {
-    for (const g of this.arrows) this.scene.remove(g);
-    this.arrows = [];
+    this.arrowPairs = [];
+    this.drawArrows();
+  }
+
+  drawArrows() {
+    while (this.arrowSvg.firstChild) this.arrowSvg.removeChild(this.arrowSvg.firstChild);
+    const NS = 'http://www.w3.org/2000/svg';
+    for (const { from, to } of this.arrowPairs) {
+      const a = this.displayPos(from);
+      const b = this.displayPos(to);
+      const ax = a.col * 100 + 50, ay = a.row * 100 + 50;
+      const bx = b.col * 100 + 50, by = b.row * 100 + 50;
+      const dx = bx - ax, dy = by - ay;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      const ux = dx / len, uy = dy / len;
+      const px = -uy, py = ux;
+      const line = document.createElementNS(NS, 'line');
+      line.setAttribute('x1', ax + ux * 12);
+      line.setAttribute('y1', ay + uy * 12);
+      line.setAttribute('x2', bx - ux * 40);
+      line.setAttribute('y2', by - uy * 40);
+      line.setAttribute('stroke', '#7ed957');
+      line.setAttribute('stroke-width', '14');
+      line.setAttribute('stroke-linecap', 'round');
+      const head = document.createElementNS(NS, 'polygon');
+      const baseX = bx - ux * 46, baseY = by - uy * 46;
+      head.setAttribute('points',
+        `${bx},${by} ${baseX + px * 20},${baseY + py * 20} ${baseX - px * 20},${baseY - py * 20}`);
+      head.setAttribute('fill', '#7ed957');
+      this.arrowSvg.appendChild(line);
+      this.arrowSvg.appendChild(head);
+    }
   }
 
   setSelected(square) {
     this.clearSelection();
     if (!square) return;
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.94, 0.94), this.selectMat);
-    mesh.rotation.x = -Math.PI / 2;
-    const { x, z } = this.squareToPos(FILES.indexOf(square[0]), parseInt(square[1], 10) - 1);
-    mesh.position.set(x, 0.11, z);
-    this.scene.add(mesh);
-    this.selectMesh = mesh;
     this.selectedSquare = square;
+    this.applySelection();
   }
 
   clearSelection() {
-    if (this.selectMesh) this.scene.remove(this.selectMesh);
-    this.selectMesh = null;
     this.selectedSquare = null;
+    this.applySelection();
   }
 
-  /* Animation: tweens run in the render loop so the page never blocks. */
-  tween(group, to, durMs, opts = {}) {
-    this.tweens.push({
-      group, from: group.position.clone(), to, start: performance.now(), durMs,
-      arc: opts.arc || 0, bounces: opts.bounces || 0, wobble: opts.wobble || 0,
-      onDone: opts.onDone || null,
-    });
+  /* Animation: Web Animations API, so the page never blocks. */
+  dragTransform(el) {
+    const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(el.style.transform || '');
+    return m ? { dx: parseFloat(m[1]), dy: parseFloat(m[2]) } : { dx: 0, dy: 0 };
   }
 
   // Playful bounce-back for intercepted blunders: hops home with a wobble.
   bounceBack(square) {
-    const group = this.pieceGroups.get(square);
-    if (!group) return;
-    const { x, z } = this.squareToPos(FILES.indexOf(square[0]), parseInt(square[1], 10) - 1);
-    this.tween(group, new THREE.Vector3(x, 0.1, z), 700,
-      { bounces: 3, arc: 0.55, wobble: 0.35 });
+    const el = this.pieceEls.get(square);
+    if (!el) return;
+    const { dx, dy } = this.dragTransform(el);
+    el.classList.add('dragging');
+    const anim = el.animate([
+      { transform: `translate(${dx}px, ${dy}px)` },
+      { transform: `translate(${dx / 2}px, ${dy / 2 - 22}px) rotate(-4deg)`, offset: 0.4 },
+      { transform: `translate(${dx / 2}px, ${dy / 2 - 22}px) rotate(4deg)`, offset: 0.7 },
+      { transform: 'translate(0, 0)' },
+    ], { duration: 700, easing: 'ease-out' });
+    anim.onfinish = () => { el.style.transform = ''; el.classList.remove('dragging'); };
   }
 
   snapBack(square) {
-    const group = this.pieceGroups.get(square);
-    if (!group) return;
-    const { x, z } = this.squareToPos(FILES.indexOf(square[0]), parseInt(square[1], 10) - 1);
-    this.tween(group, new THREE.Vector3(x, 0.1, z), 180);
+    const el = this.pieceEls.get(square);
+    if (!el) return;
+    const { dx, dy } = this.dragTransform(el);
+    const anim = el.animate([
+      { transform: `translate(${dx}px, ${dy}px)` },
+      { transform: 'translate(0, 0)' },
+    ], { duration: 180, easing: 'ease-out' });
+    anim.onfinish = () => { el.style.transform = ''; };
   }
 
   // Animate an applied move; captured pieces pop out of existence.
   animateMove(from, to, capturedSquare) {
-    const group = this.pieceGroups.get(from);
-    if (!group) return;
+    if (from === to) return;
     if (capturedSquare) {
-      const victim = this.pieceGroups.get(capturedSquare);
+      const victim = this.pieceEls.get(capturedSquare);
       if (victim) {
-        this.scalers.push({ group: victim, start: performance.now(), durMs: 200 });
-        this.pieceGroups.delete(capturedSquare);
+        const pop = victim.animate(
+          [{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(0)', opacity: 0 }],
+          { duration: 200, easing: 'ease-in' });
+        pop.onfinish = () => victim.remove();
+        this.pieceEls.delete(capturedSquare);
+        this.pieceData.delete(capturedSquare);
       }
     }
-    const { x, z } = this.squareToPos(FILES.indexOf(to[0]), parseInt(to[1], 10) - 1);
-    this.tween(group, new THREE.Vector3(x, 0.1, z), 260, { arc: 0.4 });
-    this.pieceGroups.delete(from);
-    group.userData.square = to;
-    this.pieceGroups.set(to, group);
+    const el = this.pieceEls.get(from);
+    const fromCell = this.cells.get(from);
+    const toCell = this.cells.get(to);
+    if (!el || !fromCell || !toCell) return;
+    const data = this.pieceData.get(from);
+    const dx = toCell.offsetLeft - fromCell.offsetLeft;
+    const dy = toCell.offsetTop - fromCell.offsetTop;
+    el.style.transform = '';
+    el.classList.remove('dragging');
+    toCell.appendChild(el);
+    el.dataset.square = to;
+    const anim = el.animate([
+      { transform: `translate(${-dx}px, ${-dy}px)` },
+      { transform: `translate(${-dx / 2}px, ${-dy / 2 - 18}px)`, offset: 0.5 },
+      { transform: 'translate(0, 0)' },
+    ], { duration: 260, easing: 'ease-out' });
+    anim.onfinish = () => { el.style.transform = ''; };
+    this.pieceEls.delete(from);
+    this.pieceEls.set(to, el);
+    this.pieceData.delete(from);
+    if (data) this.pieceData.set(to, data);
   }
 
-  /* Input: drag-and-drop primary, click-to-select then click-tile also works. */
+  /* View: pinch zoom + two-finger pan, anchored at the fingers' midpoint. */
+  applyZoom() {
+    const { scale, tx, ty } = this.zoom;
+    this.boardEl.style.transform =
+      (scale === 1 && tx === 0 && ty === 0) ? '' : `translate(${tx}px, ${ty}px) scale(${scale})`;
+  }
+
+  resetView() {
+    this.zoom = { scale: 1, tx: 0, ty: 0 };
+    this.applyZoom();
+  }
+
+  /* Input: drag-and-drop primary, tap-to-select then tap-tile also works. */
   bindInput() {
-    const el = this.renderer.domElement;
-
-    const setPointer = (x, y) => {
-      const rect = el.getBoundingClientRect();
-      this.pointer.x = ((x - rect.left) / rect.width) * 2 - 1;
-      this.pointer.y = -((y - rect.top) / rect.height) * 2 + 1;
-    };
-
-    const pickPiece = () => {
-      this.raycaster.setFromCamera(this.pointer, this.camera);
-      const hits = this.raycaster.intersectObjects([...this.pieceGroups.values()], true);
-      if (!hits.length) return null;
-      let obj = hits[0].object;
-      while (obj && !obj.userData.square) obj = obj.parent;
-      return obj ? obj.userData.square : null;
-    };
-
-    const planePoint = () => {
-      this.raycaster.setFromCamera(this.pointer, this.camera);
-      const point = new THREE.Vector3();
-      return this.raycaster.ray.intersectPlane(this.dragPlane, point) ? point : null;
-    };
-
     const dist2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
     const mid2 = (a, b) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 
@@ -556,32 +476,44 @@ class BoardView {
       const d = dist2(pts[0], pts[1]);
       const mid = mid2(pts[0], pts[1]);
       if (d < 1) return;
-      setPointer(this.pinch.prevMid.x, this.pinch.prevMid.y);
-      const wOld = planePoint();
-      this.viewDist = Math.min(this.viewDistDefault,
-        Math.max(this.viewDistMin, this.viewDist * (this.pinch.prevDist / d)));
-      this.updateCamera();
-      setPointer(mid.x, mid.y);
-      const wNew = planePoint();
-      if (wOld && wNew) {
-        this.viewTarget.x = Math.max(-3.5, Math.min(3.5, this.viewTarget.x + wOld.x - wNew.x));
-        this.viewTarget.z = Math.max(-3.5, Math.min(3.5, this.viewTarget.z + wOld.z - wNew.z));
-        this.updateCamera();
+      const rect = this.boardEl.getBoundingClientRect();
+      const s = rect.width / this.boardEl.offsetWidth;
+      const originX = rect.left - this.zoom.tx;
+      const originY = rect.top - this.zoom.ty;
+      const bx = (this.pinch.prevMid.x - rect.left) / s;
+      const by = (this.pinch.prevMid.y - rect.top) / s;
+      const s2 = Math.min(2.5, Math.max(1, s * (this.pinch.prevDist / d)));
+      if (s2 <= 1.001) {
+        this.resetView();
+      } else {
+        let tx = mid.x - originX - bx * s2;
+        let ty = mid.y - originY - by * s2;
+        // Keep at least a sliver of board inside the container frame.
+        const cRect = this.container.getBoundingClientRect();
+        const w = this.boardEl.offsetWidth * s2;
+        const h = this.boardEl.offsetHeight * s2;
+        tx = Math.max(cRect.left + 20 - w - originX, Math.min(cRect.right - 20 - originX, tx));
+        ty = Math.max(cRect.top + 20 - h - originY, Math.min(cRect.bottom - 20 - originY, ty));
+        this.zoom = { scale: s2, tx, ty };
+        this.applyZoom();
       }
       this.pinch.prevDist = d;
       this.pinch.prevMid = mid;
     };
 
     // A drag interrupted by a second finger: the piece goes home.
+    // Pieces never leave their home cell in the DOM (drags are pure
+    // transforms), so cancelling is just clearing the transform.
     const cancelDrag = () => {
       if (!this.dragged) return;
-      const { square, group } = this.dragged;
-      const { x, z } = this.squareToPos(FILES.indexOf(square[0]), parseInt(square[1], 10) - 1);
-      group.position.set(x, 0.1, z);
+      if (this.dragged.el) {
+        this.dragged.el.style.transform = '';
+        this.dragged.el.classList.remove('dragging');
+      }
       this.dragged = null;
     };
 
-    el.addEventListener('pointerdown', (e) => {
+    this.boardEl.addEventListener('pointerdown', (e) => {
       // Pinch bookkeeping runs even when input is locked: zooming is
       // view-only and should work while the opponent is thinking.
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -597,12 +529,12 @@ class BoardView {
       }
       if (this.pointers.size > 2) return;
       if (!this.interactive) return;
-      setPointer(e.clientX, e.clientY);
-      const square = pickPiece();
-      this.downInfo = { time: performance.now(), x: e.clientX, y: e.clientY, hitPiece: !!square };
-      if (square) {
-        const group = this.pieceGroups.get(square);
-        if (group.userData.color !== this.turn) {
+      const square = this.squareFromClient(e.clientX, e.clientY);
+      const piece = square ? this.pieceData.get(square) : undefined;
+      this.downInfo = { time: performance.now(), x: e.clientX, y: e.clientY, hitPiece: !!piece };
+      if (!square) return;
+      if (piece) {
+        if (piece.color !== this.turn) {
           // Clicking an enemy piece with a selection armed = capture attempt.
           if (this.selectedSquare) this.cb.onTileClick(square);
           return;
@@ -616,12 +548,11 @@ class BoardView {
         }
         this.setSelected(square);
         this.cb.onSelect(square);
-        group.position.y = 0.55; // lift while dragging
-        this.dragged = { square, group };
+        const pel = this.pieceEls.get(square);
+        if (pel) pel.classList.add('dragging');
+        this.dragged = { square, el: pel, startX: e.clientX, startY: e.clientY };
       } else if (this.selectedSquare) {
-        const point = planePoint();
-        const tile = point ? this.posToSquare(point.x, point.z) : null;
-        if (tile) this.cb.onTileClick(tile);
+        this.cb.onTileClick(square);
       }
     });
 
@@ -631,11 +562,13 @@ class BoardView {
       }
       if (this.pinch) { pinchMove(); return; }
       if (!this.dragged) return;
-      setPointer(e.clientX, e.clientY);
-      const point = planePoint();
-      if (!point) return;
-      this.dragged.group.position.x = Math.max(-4, Math.min(4, point.x));
-      this.dragged.group.position.z = Math.max(-4, Math.min(4, point.z));
+      const rect = this.boardEl.getBoundingClientRect();
+      const s = rect.width / this.boardEl.offsetWidth;
+      const dx = (e.clientX - this.dragged.startX) / s;
+      const dy = (e.clientY - this.dragged.startY) / s;
+      if (this.dragged.el) {
+        this.dragged.el.style.transform = `translate(${dx}px, ${dy}px) scale(1.12)`;
+      }
     });
 
     window.addEventListener('pointerup', (e) => {
@@ -665,20 +598,24 @@ class BoardView {
         this.downInfo = null;
         return;
       }
-      const { square, group } = this.dragged;
+      const { square, el } = this.dragged;
       this.dragged = null;
       this.downInfo = null;
-      setPointer(e.clientX, e.clientY);
-      const point = planePoint();
-      const tile = point ? this.posToSquare(point.x, point.z) : null;
+      const tile = this.squareFromClient(e.clientX, e.clientY);
       if (!tile || tile === square) {
-        // Dropped on its own square: stay selected (click mode armed).
-        group.position.y = 0.1;
+        // Dropped outside the board or on its own square: back home,
+        // but stay selected (click mode armed).
+        if (el) { el.style.transform = ''; el.classList.remove('dragging'); }
         return;
       }
-      // The app resolves legality; the view leaves the piece on the
-      // drop square until the app animates it home or to its target.
-      group.position.y = 0.1;
+      // The app resolves legality; the piece stays visually on the
+      // drop square (transform kept) until the app animates it home
+      // (bounceBack/snapBack) or to its target (animateMove).
+      if (el) {
+        const { dx, dy } = this.dragTransform(el);
+        el.style.transform = `translate(${dx}px, ${dy}px)`;
+        el.classList.remove('dragging');
+      }
       this.cb.onDrop(square, tile);
     });
 
@@ -688,63 +625,6 @@ class BoardView {
       cancelDrag();
       this.downInfo = null;
     });
-  }
-
-  resize() {
-    const w = this.container.clientWidth;
-    const h = this.container.clientHeight;
-    if (!w || !h) return;
-    this.renderer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-  }
-
-  // Apply the pinch-zoom view state to the camera.
-  updateCamera() {
-    this.camera.position.copy(this.viewTarget).addScaledVector(this.viewDir, this.viewDist);
-    this.camera.lookAt(this.viewTarget);
-  }
-
-  // Back to the full board (double-tap the board).
-  resetView() {
-    this.viewTarget.set(0, 0, 0);
-    this.viewDist = this.viewDistDefault;
-    this.updateCamera();
-  }
-
-  animate() {
-    requestAnimationFrame(() => this.animate());
-    const now = performance.now();
-    const t = this.clock.getElapsedTime();
-
-    // Soft pulse on the green highlights and arrows.
-    this.highlightMat.emissiveIntensity = 0.65 + 0.35 * Math.sin(t * 3);
-    this.arrowMat.opacity = 0.7 + 0.3 * Math.sin(t * 3);
-
-    this.tweens = this.tweens.filter((tw) => {
-      const p = Math.min(1, (now - tw.start) / tw.durMs);
-      const pos = tw.from.clone().lerp(tw.to, p);
-      if (tw.bounces > 0) pos.y += Math.abs(Math.sin(p * Math.PI * tw.bounces)) * tw.arc;
-      else if (tw.arc > 0) pos.y += Math.sin(p * Math.PI) * tw.arc;
-      if (tw.wobble > 0) tw.group.rotation.z = Math.sin(p * Math.PI * 6) * tw.wobble * (1 - p);
-      tw.group.position.copy(pos);
-      if (p >= 1) {
-        tw.group.position.copy(tw.to);
-        tw.group.rotation.z = 0;
-        if (tw.onDone) tw.onDone();
-        return false;
-      }
-      return true;
-    });
-
-    this.scalers = this.scalers.filter((s) => {
-      const p = Math.min(1, (now - s.start) / s.durMs);
-      s.group.scale.setScalar(Math.max(0.01, 1 - p));
-      if (p >= 1) { this.scene.remove(s.group); return false; }
-      return true;
-    });
-
-    this.renderer.render(this.scene, this.camera);
   }
 }
 
