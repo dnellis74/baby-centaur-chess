@@ -16,7 +16,7 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js';
+import { pieceArt } from './pieces.js?v=11';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -801,7 +801,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js');
+    this.engine = new EngineBridge('engine-worker.js?v=11');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
