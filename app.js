@@ -16,9 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=18';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=18';
-import { SoundManager } from './sound.js?v=18';
+import { pieceArt } from './pieces.js?v=19';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=19';
+import { SoundManager } from './sound.js?v=19';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=19';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -98,6 +99,41 @@ function formatScoreCp(cp) {
 }
 
 const squareName = (file, rank) => FILES[file] + (rank + 1); // file 0-7, rank 0-7 (rank 1 = 0)
+
+// "3m ago" style timestamps for the games list.
+function relTime(ts) {
+  if (!ts) return '';
+  const secs = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+// Probe a room's state for the games list (the worker's read-only
+// /state endpoint). The worker URL is https (or ws for local tests);
+// fetch wants http(s), so the scheme is rewritten.
+async function fetchRoomState(workerUrl, roomId) {
+  try {
+    const base = workerUrl.replace(/^ws/, 'http');
+    const res = await fetch(`${base}/room/${roomId}/state`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (typeof data.plies !== 'number' || !data.seats) return null;
+    return { plies: data.plies, seats: { w: !!data.seats.w, b: !!data.seats.b } };
+  } catch {
+    return null;
+  }
+}
+
+// localStorage can throw on access in locked-down contexts.
+function safeLocalStorage() {
+  try { return window.localStorage; } catch { return null; }
+}
 
 /* ------------------------------------------------------------------ */
 /* GameStateManager — rules only, no rendering                         */
@@ -942,7 +978,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=18');
+    this.engine = new EngineBridge('engine-worker.js?v=19');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -966,8 +1002,8 @@ class CentaurApp {
     this.autoHints = AUTO_HINTS;
     // Network (Phase 3): seat is set on welcome; null means solo.
     // workerUrl comes from config, or ?worker= for local testing.
-    // The friend button always shows when a worker is configured;
-    // the game stays solo vs Stockfish until it is tapped.
+    // Friend games are created from the games list (v3); opening one
+    // connects to its room.
     this.seat = null;
     this.pendingMove = null;
     const params = new URLSearchParams(location.search);
@@ -980,6 +1016,12 @@ class CentaurApp {
     this.highlightPairs = []; // (from, to) pairs behind the live suggestions
     this.toastTimer = null;
     this.sound = new SoundManager();
+    // Games library (v3): the landing page is a list of ongoing
+    // games, stored on this device. currentId is the open game's
+    // entry id, null while the list is showing.
+    this.library = new GameLibrary(safeLocalStorage());
+    this.currentId = null;
+    this.liveStates = new Map(); // roomId -> { plies, seats } from probes
 
     this.el = {
       message: document.getElementById('message-text'),
@@ -989,8 +1031,14 @@ class CentaurApp {
       evalFill: document.getElementById('eval-fill'),
       evalLabel: document.getElementById('eval-label'),
       toast: document.getElementById('toast'),
-      friendBtn: document.getElementById('friend-btn'),
       speakerBtn: document.getElementById('speaker-btn'),
+      backBtn: document.getElementById('back-btn'),
+      listView: document.getElementById('list-view'),
+      gameView: document.getElementById('game-view'),
+      gamesList: document.getElementById('games-list'),
+      emptyState: document.getElementById('empty-state'),
+      createOverlay: document.getElementById('create-overlay'),
+      createName: document.getElementById('create-name'),
       lobby: document.getElementById('lobby'),
       lobbyStatus: document.getElementById('lobby-status'),
       lobbyLink: document.getElementById('lobby-link'),
@@ -1000,8 +1048,12 @@ class CentaurApp {
     };
 
     document.getElementById('play-again').addEventListener('click', () => this.newGame());
-    document.getElementById('friend-btn').addEventListener('click', () => this.createRoom());
     document.getElementById('speaker-btn').addEventListener('click', () => this.toggleSound());
+    document.getElementById('back-btn').addEventListener('click', () => this.backToList());
+    document.getElementById('new-game-btn').addEventListener('click', () => this.openCreate());
+    document.getElementById('create-solo').addEventListener('click', () => this.createSoloGame());
+    document.getElementById('create-friend').addEventListener('click', () => this.createFriendGame());
+    document.getElementById('create-cancel').addEventListener('click', () => this.closeCreate());
     this.updateSpeakerIcon();
     // Browsers block audio until the player interacts: unlock on the
     // first touch, and give every button a soft click.
@@ -1025,34 +1077,279 @@ class CentaurApp {
     this.network.onReset(() => this.newGame({ remote: true }));
     if (FLIPPED) this.view.setFlipped(true);
     if (this.assist === 'off') this.el.evalLabel.textContent = '—';
-    // Friend button shows whenever a worker is configured. Solo
-    // stays the default; network play starts only when it is tapped.
-    if (!this.workerUrl) this.el.friendBtn.classList.add('hidden');
+    // Friend games need the worker; without one, creation is solo-only.
+    if (!this.workerUrl) document.getElementById('create-friend').classList.add('hidden');
   }
 
   async start() {
-    const engineOk = await this.engine.init();
-    if (!engineOk) this.toast('Partner unavailable (engine failed to load) — playing without hints');
-    // Network intent: a room link plus a configured worker. Otherwise
-    // the game is solo exactly as before.
-    if (this.roomId && this.workerUrl) {
-      this.el.message.textContent = 'Connecting...';
-      const playerId = this.playerIdForRoom(this.roomId);
-      const welcome = await this.network.connect(this.workerUrl, this.roomId, playerId);
-      if (welcome) {
-        this.mode = 'network';
-        this.applyWelcome(welcome);
-      } else {
-        this.toast("Couldn't reach the game server, playing solo instead.");
+    // A room link opens that game directly (and files it in the
+    // list). A ?game= link reopens a solo game. Anything else lands
+    // on the games list.
+    const params = new URLSearchParams(location.search);
+    const roomId = params.get('room');
+    if (roomId && this.workerUrl) {
+      let entry = this.library.get(roomId);
+      if (!entry) {
+        entry = this.library.upsert({
+          id: roomId, kind: 'friend',
+          name: params.get('name') || 'Friend game',
+          roomId, seat: null, plies: 0, seats: null,
+          finished: false, result: '',
+        });
+      }
+      await this.openFriendGame(entry);
+      return;
+    }
+    const soloId = params.get('game');
+    if (soloId) {
+      const entry = this.library.get(soloId);
+      if (entry && entry.kind === 'solo') {
+        await this.openSoloGame(entry);
+        return;
       }
     }
-    if (this.mode !== 'network') {
-      this.view.setPieces(this.state.pieces());
-      this.refreshUI();
-      // Background analysis fills eval bar, then auto hints
-      // show the partner's ideas for the side to move.
-      this.refreshAnalysis().then(() => this.maybeAutoHint());
+    this.showList();
+  }
+
+  /* Games list (v3) ------------------------------------------------ */
+
+  showGameView() {
+    this.el.listView.classList.add('hidden');
+    this.el.gameView.classList.remove('hidden');
+    this.el.backBtn.classList.remove('hidden');
+  }
+
+  showList() {
+    this.el.gameView.classList.add('hidden');
+    this.el.backBtn.classList.add('hidden');
+    this.el.listView.classList.remove('hidden');
+    this.renderList();
+    this.refreshLiveStates();
+  }
+
+  // Keep the address bar pointing at the open game, so a refresh
+  // reopens it. The ?worker= test override is kept.
+  setGameUrl({ room = null, game = null, name = null } = {}) {
+    const url = new URL(location.href);
+    url.searchParams.delete('room');
+    url.searchParams.delete('game');
+    url.searchParams.delete('name');
+    if (room) url.searchParams.set('room', room);
+    if (game) url.searchParams.set('game', game);
+    if (room && name) url.searchParams.set('name', name);
+    history.replaceState(null, '', url);
+  }
+
+  renderList() {
+    const entries = this.library.list();
+    this.el.emptyState.classList.toggle('hidden', entries.length > 0);
+    this.el.gamesList.innerHTML = '';
+    for (const entry of entries) {
+      const live = entry.kind === 'friend' ? this.liveStates.get(entry.roomId) : null;
+      const status = gameStatus(entry, live);
+      const row = document.createElement('div');
+      row.className = 'game-row';
+      row.setAttribute('role', 'button');
+      const main = document.createElement('span');
+      main.className = 'game-main';
+      const nameEl = document.createElement('span');
+      nameEl.className = 'game-name';
+      nameEl.textContent = entry.name || 'Game';
+      const meta = document.createElement('span');
+      meta.className = 'game-meta';
+      meta.textContent = `${entry.kind === 'solo' ? 'Solo' : 'With a friend'} · ${relTime(entry.updatedAt)}`;
+      main.append(nameEl, meta);
+      const pill = document.createElement('span');
+      pill.className = `pill pill-${status.key}`;
+      pill.textContent = status.label;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.className = 'remove-btn';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', `Remove ${entry.name || 'game'} from your list`);
+      remove.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (remove.classList.contains('confirm')) {
+          this.library.remove(entry.id);
+          this.liveStates.delete(entry.roomId);
+          this.renderList();
+        } else {
+          remove.classList.add('confirm');
+          remove.textContent = 'Sure?';
+          setTimeout(() => {
+            remove.classList.remove('confirm');
+            remove.textContent = '×';
+          }, 3000);
+        }
+      });
+      row.append(main, pill, remove);
+      row.addEventListener('click', () => this.openEntry(entry.id));
+      this.el.gamesList.appendChild(row);
     }
+  }
+
+  // Probe every friend room so the your-move pills are live, and
+  // fold what the probes learn back into the stored entries. A probe
+  // that finds new moves also bumps the game's last-played time.
+  async refreshLiveStates() {
+    if (!this.workerUrl) return;
+    const friends = this.library.list().filter((e) => e.kind === 'friend');
+    if (!friends.length) return;
+    await Promise.allSettled(friends.map(async (entry) => {
+      const live = await fetchRoomState(this.workerUrl, entry.roomId);
+      if (!live) return;
+      this.liveStates.set(entry.roomId, live);
+      const fresh = this.library.get(entry.id);
+      if (fresh) {
+        const hadPlies = fresh.plies || 0;
+        fresh.plies = live.plies;
+        fresh.seats = live.seats;
+        if (live.plies !== hadPlies) fresh.updatedAt = Date.now();
+        this.library.upsert(fresh);
+      }
+    }));
+    if (this.currentId === null) this.renderList();
+  }
+
+  openEntry(id) {
+    const entry = this.library.get(id);
+    if (!entry) return;
+    if (entry.kind === 'solo') this.openSoloGame(entry);
+    else this.openFriendGame(entry);
+  }
+
+  openCreate() {
+    this.el.createName.value = suggestedGameName(this.library.all());
+    this.el.createOverlay.classList.remove('hidden');
+    this.el.createName.focus();
+    this.el.createName.select();
+  }
+
+  closeCreate() {
+    this.el.createOverlay.classList.add('hidden');
+  }
+
+  createSoloGame() {
+    const name = this.el.createName.value.trim() || suggestedGameName(this.library.all());
+    const entry = this.library.upsert({
+      id: `solo-${this.makeRoomId()}`, kind: 'solo', name,
+      moves: [], finished: false, result: '',
+    });
+    this.closeCreate();
+    this.openSoloGame(entry);
+  }
+
+  createFriendGame() {
+    if (!this.workerUrl) return;
+    const name = this.el.createName.value.trim() || suggestedGameName(this.library.all());
+    const roomId = this.makeRoomId();
+    const entry = this.library.upsert({
+      id: roomId, kind: 'friend', name, roomId,
+      seat: 'w', plies: 0, seats: { w: true, b: false },
+      finished: false, result: '',
+    });
+    this.closeCreate();
+    this.openFriendGame(entry);
+  }
+
+  // Open a solo game: fresh, or resumed by replaying its stored
+  // moves through the rules. If the app was closed while Stockfish
+  // was "thinking", its reply is simply played now.
+  async openSoloGame(entry) {
+    this.currentId = entry.id;
+    this.mode = 'solo';
+    this.seat = null;
+    this.showGameView();
+    this.setGameUrl({ game: entry.id });
+    const engineOk = await this.engine.init();
+    if (!engineOk) this.toast('Partner unavailable (engine failed to load) — playing without hints');
+    this.state.reset();
+    for (const m of entry.moves || []) {
+      if (!this.state.tryMove(m.from, m.to, m.promotion || 'q')) break;
+    }
+    this.view.setFlipped(FLIPPED);
+    this.view.setPieces(this.state.pieces());
+    this.view.clearHighlights();
+    this.view.clearSelection();
+    this.cachedAnalysis = null;
+    this.highlightFen = null;
+    this.highlightSquares = new Set();
+    this.highlightPairs = [];
+    this.inputLocked = false;
+    this.view.interactive = true;
+    this.refreshUI();
+    if (this.state.isGameOver()) return;
+    if (this.state.turn() === 'b') this.aiReply();
+    else this.refreshAnalysis().then(() => this.maybeAutoHint());
+  }
+
+  // Open a friend game: connect (or reconnect) to its room and let
+  // the welcome rebuild the board. A fresh room where no friend has
+  // arrived yet opens the lobby with the share link.
+  async openFriendGame(entry) {
+    this.currentId = entry.id;
+    this.roomId = entry.roomId;
+    this.showGameView();
+    this.setGameUrl({ room: entry.roomId, name: entry.name });
+    const engineOk = await this.engine.init();
+    if (!engineOk) this.toast('Partner unavailable (engine failed to load) — playing without hints');
+    this.el.message.textContent = 'Connecting...';
+    const playerId = this.playerIdForRoom(entry.roomId);
+    const welcome = await this.network.connect(this.workerUrl, entry.roomId, playerId);
+    if (!welcome) {
+      this.toast("Couldn't reach the game server.");
+      this.currentId = null; // nothing was opened; persist nothing
+      this.backToList();
+      return;
+    }
+    this.mode = 'network';
+    this.applyWelcome(welcome);
+    if (this.seat === 'w' && !welcome.peer && (welcome.moves || []).length === 0) {
+      this.showLobbyFor(entry);
+    }
+  }
+
+  showLobbyFor(entry) {
+    this.showLobby();
+    this.el.lobbyLink.value = this.roomLink(entry.roomId, entry.name);
+    this.el.lobbyLink.classList.remove('hidden');
+    this.el.lobbyShare.classList.remove('hidden');
+    this.el.lobbyCopy.classList.remove('hidden');
+    this.el.lobbyStatus.textContent = 'Send this link to your friend. They will play Black. The game starts when they join.';
+  }
+
+  // The open game's progress, written back to its list entry. Solo
+  // games store their full move list (that is what makes resume
+  // possible); friend games store the last known room state.
+  persistProgress() {
+    if (!this.currentId) return;
+    const entry = this.library.get(this.currentId);
+    if (!entry) return;
+    if (entry.kind === 'solo') {
+      entry.moves = this.state.history().map((m) => ({
+        from: m.from, to: m.to, promotion: m.promotion || null,
+      }));
+    } else {
+      entry.plies = this.state.history().length;
+      if (this.seat) entry.seat = this.seat;
+    }
+    entry.finished = this.state.isGameOver();
+    entry.result = entry.finished ? this.state.statusText() : '';
+    entry.updatedAt = Date.now();
+    this.library.upsert(entry);
+  }
+
+  backToList() {
+    this.persistProgress();
+    this.network.disconnect();
+    this.mode = 'solo';
+    this.seat = null;
+    this.roomId = null;
+    this.pendingMove = null;
+    this.currentId = null;
+    this.hideLobby();
+    this.setGameUrl({});
+    this.showList();
   }
 
   /* UI ------------------------------------------------------------ */
@@ -1375,6 +1672,7 @@ class CentaurApp {
     this.highlightPairs = [];
     this.view.clearHighlights(); // turn complete: suggestions leave with it
     this.refreshUI();
+    this.persistProgress();
     // Sound must never break play: if it throws, the board still unlocks.
     try { this.playMoveSound(move); } catch { /* sound is best-effort */ }
     this.inputLocked = false;
@@ -1419,6 +1717,7 @@ class CentaurApp {
     this.el.evalFill.style.width = '50%';
     this.el.evalLabel.textContent = this.assist === 'off' ? '—' : '+0.0';
     this.refreshUI();
+    this.persistProgress();
     this.refreshAnalysis().then(() => this.maybeAutoHint());
     // Network rematch: the other seat resets on receipt; a remote
     // reset must not echo back.
@@ -1453,6 +1752,7 @@ class CentaurApp {
       const res = this.state.tryMove(p.from, p.to, p.promotion || 'q');
       if (res) this.finalizeMove(res);
     }
+    this.persistProgress();
     this.refreshAnalysis().then(() => this.maybeAutoHint());
   }
 
@@ -1498,9 +1798,12 @@ class CentaurApp {
     }
   }
 
-  roomLink(roomId) {
+  roomLink(roomId, name) {
     const url = new URL(location.href);
     url.searchParams.set('room', roomId);
+    // The name rides along so the friend's list shows the same name.
+    if (name) url.searchParams.set('name', name);
+    url.searchParams.delete('game');
     url.searchParams.delete('worker'); // never share a test override
     return url.toString();
   }
@@ -1539,41 +1842,12 @@ class CentaurApp {
     this.el.lobby.classList.add('hidden');
   }
 
-  async createRoom() {
-    if (!this.workerUrl) return;
-    this.roomId = this.makeRoomId();
-    const playerId = this.playerIdForRoom(this.roomId);
-    this.showLobby();
-    const welcome = await this.network.connect(this.workerUrl, this.roomId, playerId);
-    // Back pressed while connecting: cancelLobby already cleaned up.
-    if (this.el.lobby.classList.contains('hidden')) return;
-    if (!welcome) {
-      this.toast("Couldn't reach the game server.");
-      this.el.lobby.classList.add('hidden');
-      this.roomId = null;
-      return;
-    }
-    this.mode = 'network';
-    this.applyWelcome(welcome);
-    // Fresh network game: the lobby stays until the friend joins.
-    this.el.lobbyLink.value = this.roomLink(this.roomId);
-    this.el.lobbyLink.classList.remove('hidden');
-    this.el.lobbyShare.classList.remove('hidden');
-    this.el.lobbyCopy.classList.remove('hidden');
-    this.el.lobbyStatus.textContent = 'Send this link to your friend. The game starts when they join.';
-  }
-
   cancelLobby() {
-    const wasNetwork = this.mode === 'network';
-    this.network.disconnect();
-    this.mode = 'solo';
-    this.seat = null;
-    this.roomId = null;
-    this.pendingMove = null;
+    // Leaving the lobby keeps the game: it stays in the list as a
+    // waiting game, the room lives on the server, and the friend
+    // can still join from the link at any time.
     this.hideLobby();
-    // Only a started network game needs replacing; a cancelled connect
-    // leaves the solo game underneath untouched.
-    if (wasNetwork) this.newGame();
+    this.backToList();
   }
 
   async shareRoomLink() {

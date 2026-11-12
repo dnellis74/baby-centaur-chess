@@ -51,7 +51,7 @@ body {
   white-space: nowrap;
 }
 
-.friend-btn {
+.back-btn {
   flex: 0 0 auto;
   font: inherit;
   font-size: 14px;
@@ -64,7 +64,7 @@ body {
   white-space: nowrap;
   cursor: pointer;
 }
-.friend-btn:hover { background: #2c3847; }
+.back-btn:hover { background: #2c3847; }
 
 .header-actions {
   display: flex;
@@ -479,6 +479,128 @@ body {
   font-size: 13px;
   color: #9aa7b5;
 }
+
+/* Games list (v3 landing page): one row per ongoing game, most
+   recently played first. The status pill carries the your-move
+   indicator; green is the same partner green as the board hints. */
+#game-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+}
+
+.list-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 12px;
+  width: 100%;
+  max-width: 592px;
+  margin: 0 auto;
+  padding: 16px 12px 24px;
+}
+
+.games-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.game-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  font: inherit;
+  color: #e8ecef;
+  background: #1a212b;
+  border: 1px solid #2b3542;
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.game-row:hover { background: #232c38; }
+
+.game-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.game-name {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.game-meta {
+  font-size: 13px;
+  color: #9aa7b5;
+}
+
+.pill {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.pill-your { background: #7ed957; color: #101418; }
+.pill-their { background: #232c38; color: #9aa7b5; border: 1px solid #35404e; }
+.pill-waiting { background: #e8b93c; color: #101418; }
+.pill-finished { background: #35404e; color: #e8ecef; }
+.pill-new { background: #232c38; color: #9aa7b5; border: 1px solid #35404e; }
+.pill-expired { background: transparent; color: #e07a7a; border: 1px solid #7a4444; }
+
+.remove-btn {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  color: #9aa7b5;
+  background: transparent;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  cursor: pointer;
+}
+.remove-btn.confirm {
+  width: auto;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: #7a2e2e;
+  border-color: #a04a4a;
+}
+
+.empty-state {
+  margin: 24px 0 8px;
+  text-align: center;
+  font-size: 15px;
+  color: #9aa7b5;
+}
+
+.new-game-btn {
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: #101418;
+  background: #7ed957;
+  border: none;
+  border-radius: 10px;
+  padding: 14px 20px;
+  min-height: 52px;
+  cursor: pointer;
+}
+.new-game-btn:hover { background: #8fe369; }
 
 /* Short landscape phones: keep the board from pushing the slider and
    message box a long scroll down the page. */

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Baby Centaur Chess</title>
-  <link rel="stylesheet" href="style.css?v=18" />
+  <link rel="stylesheet" href="style.css?v=19" />
 
   <!--
     No build step. This page uses ES modules + import maps, which require
@@ -24,44 +24,65 @@
 </head>
 <body>
   <header class="app-header">
+    <button class="back-btn hidden" id="back-btn" type="button">&#8249; Games</button>
     <h1>Baby Centaur Chess</h1>
     <div class="header-actions">
       <button class="speaker-btn" id="speaker-btn" type="button" aria-label="Sound on" title="Sound on — tap to mute">
         <svg class="speaker-on" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M18.5 5.5a9 9 0 0 1 0 13" /></svg>
         <svg class="speaker-off hidden" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z" fill="currentColor" stroke="none" /><line x1="16" y1="9" x2="22" y2="15" /><line x1="22" y1="9" x2="16" y2="15" /></svg>
       </button>
-      <button class="friend-btn" id="friend-btn" type="button">Play with a friend</button>
     </div>
   </header>
 
-  <main class="layout">
-    <section class="board-column">
-      <div class="board-row">
-        <div class="scene-container" id="scene-container">
-          <div class="toast" id="toast"></div>
-          <div class="promo-picker hidden" id="promo-picker">
-            <div class="promo-card">
-              <div class="promo-title">Your pawn made it! Pick a piece.</div>
-              <div class="promo-row" id="promo-row"></div>
-              <div class="promo-note" id="promo-note"></div>
+  <section class="list-view" id="list-view">
+    <div class="games-list" id="games-list"></div>
+    <p class="empty-state hidden" id="empty-state">No games yet. Start one!</p>
+    <button class="new-game-btn" id="new-game-btn" type="button">New game</button>
+  </section>
+
+  <div id="game-view" class="hidden">
+    <main class="layout">
+      <section class="board-column">
+        <div class="board-row">
+          <div class="scene-container" id="scene-container">
+            <div class="toast" id="toast"></div>
+            <div class="promo-picker hidden" id="promo-picker">
+              <div class="promo-card">
+                <div class="promo-title">Your pawn made it! Pick a piece.</div>
+                <div class="promo-row" id="promo-row"></div>
+                <div class="promo-note" id="promo-note"></div>
+              </div>
             </div>
           </div>
+          <div class="eval-bar" id="eval-bar" title="Evaluation from White's perspective">
+            <div class="eval-fill" id="eval-fill"></div>
+            <span class="eval-label" id="eval-label">+0.0</span>
+          </div>
+          <div class="message-box">
+            <p class="message-text" id="message-text">White to move</p>
+            <button class="play-again-btn hidden" id="play-again" type="button">Play again</button>
+          </div>
+          <div class="captured-box">
+            <div class="captured-row"><span class="captured-label">White took</span><span class="captured-icons" id="captured-by-white"></span></div>
+            <div class="captured-row"><span class="captured-label">Black took</span><span class="captured-icons" id="captured-by-black"></span></div>
+          </div>
         </div>
-        <div class="eval-bar" id="eval-bar" title="Evaluation from White's perspective">
-          <div class="eval-fill" id="eval-fill"></div>
-          <span class="eval-label" id="eval-label">+0.0</span>
-        </div>
-        <div class="message-box">
-          <p class="message-text" id="message-text">White to move</p>
-          <button class="play-again-btn hidden" id="play-again" type="button">Play again</button>
-        </div>
-        <div class="captured-box">
-          <div class="captured-row"><span class="captured-label">White took</span><span class="captured-icons" id="captured-by-white"></span></div>
-          <div class="captured-row"><span class="captured-label">Black took</span><span class="captured-icons" id="captured-by-black"></span></div>
-        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="lobby hidden" id="create-overlay">
+    <div class="lobby-card">
+      <h2>New game</h2>
+      <p class="lobby-status">Name this game, so you can tell it apart in your list.</p>
+      <input class="lobby-link" id="create-name" type="text" maxlength="40" autocomplete="off" />
+      <div class="lobby-row">
+        <button class="lobby-btn" id="create-solo" type="button">Play solo</button>
+        <button class="lobby-btn" id="create-friend" type="button">Play with a friend</button>
+        <button class="lobby-btn" id="create-cancel" type="button">Cancel</button>
       </div>
-    </section>
-  </main>
+    </div>
+  </div>
 
   <div class="lobby hidden" id="lobby">
     <div class="lobby-card">
@@ -76,6 +97,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=18"></script>
+  <script type="module" src="app.js?v=19"></script>
 </body>
 </html>

@@ -57,6 +57,11 @@ full (both seats taken). Seats persist per playerId, so rejoining with
 the same playerId restores the seat and the full move list. Rooms
 expire 7 days after their last activity (sliding alarm).
 
+Read-only probe (added for the v3 games list): GET /room/<id>/state
+returns { plies, seats: { w, b } } as JSON with CORS open. It opens no
+socket and takes no seat; the games list uses it for the your-move
+indicators. A probe counts as room activity and renews the expiry.
+
 ## History (why deploy is wrangler-only)
 
 - 2026-11-01: worker created and code pasted via the Cloudflare
@@ -83,6 +88,8 @@ expire 7 days after their last activity (sliding alarm).
 ## Game wiring
 
 The game (../config.js) connects wss to <WORKER_URL>/room/<id> when
-WORKER_URL is set; empty means network play is off and the friend
-button stays hidden. The ?v=15 publish sets it to the live URL above,
-once the two-tab smoke test passes.
+WORKER_URL is set; empty means network play is off. Since v3, friend
+games are created from the games list (the landing page), the list
+probes <WORKER_URL>/room/<id>/state for live your-move indicators,
+and room links carry the game name (?name=) so both players' lists
+show the same name.

@@ -29,8 +29,9 @@ export const AUTO_HINTS = true;
 export const FLIPPED = false;
 
 // Game server for network play (Phase 3). The live worker URL; the game
-// connects over wss to <WORKER_URL>/room/<id>. The "Play with a friend"
-// button always shows when this is set; the game stays solo vs
-// Stockfish until it is tapped. For local testing,
-// ?worker=ws://localhost:8787 overrides this without editing the file.
+// connects over wss to <WORKER_URL>/room/<id>. Friend games are created
+// from the games list (v3); the list also probes the read-only
+// <WORKER_URL>/room/<id>/state endpoint for the your-move indicators.
+// For local testing, ?worker=ws://localhost:8787 overrides this
+// without editing the file.
 export const WORKER_URL = 'https://baby-centaur-chess-rooms.dnellis74.workers.dev';

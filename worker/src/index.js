@@ -23,6 +23,11 @@
  * Seats are persistent per playerId: a player who drops and rejoins
  * with the same playerId gets the same seat back. Rooms expire 7 days
  * after their last activity (sliding alarm). No accounts, no chat.
+ *
+ * Read-only probe for the games list (v3): GET /room/<id>/state
+ * returns { plies, seats: { w, b } } as JSON, so a device can show a
+ * "your move" indicator without opening a socket or taking a seat.
+ * The probe counts as room activity and renews the sliding expiry.
  * Dependency-free on purpose, so this file can also be pasted into
  * the Cloudflare dashboard. Plain WebSocket accept (no hibernation
  * API) for the first cut; hibernation is a later cost optimization.
@@ -71,6 +76,21 @@ export class Room {
 
   async fetch(request) {
     await this.ensureLoaded();
+    // Read-only state probe (games list): no socket, no seat taken.
+    // A list check counts as room activity, so it renews the expiry.
+    if (request.method === 'GET' && new URL(request.url).pathname.endsWith('/state')) {
+      await this.ctx.storage.setAlarm(Date.now() + ROOM_TTL_MS);
+      const seats = {
+        w: Object.values(this.players).includes('w'),
+        b: Object.values(this.players).includes('b'),
+      };
+      return new Response(JSON.stringify({ plies: this.moves.length, seats }), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
+    }
     const upgrade = request.headers.get('Upgrade');
     if (upgrade !== 'websocket') {
       return new Response('Expected a WebSocket upgrade.', { status: 426 });
@@ -212,6 +232,11 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === '/health') {
       return new Response('ok');
+    }
+    const stateMatch = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})\/state$/);
+    if (stateMatch) {
+      const id = env.ROOMS.idFromName(stateMatch[1]);
+      return env.ROOMS.get(id).fetch(request);
     }
     const roomMatch = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,64})$/);
     if (roomMatch) {
