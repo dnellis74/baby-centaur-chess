@@ -16,8 +16,8 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=15';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=15';
+import { pieceArt } from './pieces.js?v=16';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=16';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -937,7 +937,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=15');
+    this.engine = new EngineBridge('engine-worker.js?v=16');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -961,15 +961,13 @@ class CentaurApp {
     this.autoHints = AUTO_HINTS;
     // Network (Phase 3): seat is set on welcome; null means solo.
     // workerUrl comes from config, or ?worker= for local testing.
-    // Network play is opt-in: ?friends=1 shows the button, and a
-    // shared room link (?room=) or a ?worker= override turns it on.
-    // With no param the game is solo vs Stockfish, exactly as before.
+    // The friend button always shows when a worker is configured;
+    // the game stays solo vs Stockfish until it is tapped.
     this.seat = null;
     this.pendingMove = null;
     const params = new URLSearchParams(location.search);
     this.roomId = params.get('room');
     this.workerUrl = params.get('worker') || WORKER_URL;
-    this.networkOn = params.has('friends') || params.has('worker') || params.has('room');
     this.inputLocked = false;
     this.cachedAnalysis = null; // { fen, lines } — freshest engine view
     this.highlightFen = null;
@@ -1014,9 +1012,9 @@ class CentaurApp {
     this.network.onReset(() => this.newGame({ remote: true }));
     if (FLIPPED) this.view.setFlipped(true);
     if (this.assist === 'off') this.el.evalLabel.textContent = '—';
-    // Friend play is opt-in: hidden unless the worker is configured
-    // and this visit asked for it (?friends=1, ?room=, or ?worker=).
-    if (!this.workerUrl || !this.networkOn) this.el.friendBtn.classList.add('hidden');
+    // Friend button shows whenever a worker is configured. Solo
+    // stays the default; network play starts only when it is tapped.
+    if (!this.workerUrl) this.el.friendBtn.classList.add('hidden');
   }
 
   async start() {
@@ -1454,7 +1452,6 @@ class CentaurApp {
   roomLink(roomId) {
     const url = new URL(location.href);
     url.searchParams.set('room', roomId);
-    url.searchParams.set('friends', '1'); // joiner's tab opts into network play
     url.searchParams.delete('worker'); // never share a test override
     return url.toString();
   }
