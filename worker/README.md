@@ -34,6 +34,18 @@ From this folder (Node 20+): `npx wrangler login` once per machine,
 then `npx wrangler deploy`. It updates the worker in place under the
 same name. `npx wrangler dev --port 8787` runs it locally for testing.
 
+## Flushing all rooms
+
+`node flush-rooms.mjs` deletes EVERY stored game. There is no API
+to empty a Durable Object namespace, so the script renames the DO
+class (Room -> Room2 -> ...), appends migrations that delete the
+old class (and all its objects) and create the new one empty, then
+runs `npx wrangler deploy`. It asks for confirmation unless --yes
+is passed, supports --dry-run and --no-deploy, and rolls the file
+edits back if the deploy fails. After a flush, tell Muse the new
+class name so the repo copy of src/index.js and wrangler.toml
+stays in sync with what is live.
+
 ## Protocol test
 
 `WS_URL=wss://baby-centaur-chess-rooms.dnellis74.workers.dev node test-protocol.mjs`
