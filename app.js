@@ -16,8 +16,9 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=16';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=16';
+import { pieceArt } from './pieces.js?v=17';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=17';
+import { SoundManager } from './sound.js?v=17';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -937,7 +938,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=16');
+    this.engine = new EngineBridge('engine-worker.js?v=17');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -974,6 +975,7 @@ class CentaurApp {
     this.highlightSquares = new Set();
     this.highlightPairs = []; // (from, to) pairs behind the live suggestions
     this.toastTimer = null;
+    this.sound = new SoundManager();
 
     this.el = {
       message: document.getElementById('message-text'),
@@ -984,6 +986,7 @@ class CentaurApp {
       evalLabel: document.getElementById('eval-label'),
       toast: document.getElementById('toast'),
       friendBtn: document.getElementById('friend-btn'),
+      speakerBtn: document.getElementById('speaker-btn'),
       lobby: document.getElementById('lobby'),
       lobbyStatus: document.getElementById('lobby-status'),
       lobbyLink: document.getElementById('lobby-link'),
@@ -994,6 +997,12 @@ class CentaurApp {
 
     document.getElementById('play-again').addEventListener('click', () => this.newGame());
     document.getElementById('friend-btn').addEventListener('click', () => this.createRoom());
+    document.getElementById('speaker-btn').addEventListener('click', () => this.toggleSound());
+    this.updateSpeakerIcon();
+    // Browsers block audio until the player interacts: unlock on the
+    // first touch, and give every button a soft click.
+    document.addEventListener('pointerdown', () => this.sound.unlock(), { once: true });
+    document.addEventListener('click', (e) => { if (e.target.closest('button')) this.sound.click(); });
     document.getElementById('lobby-share').addEventListener('click', () => this.shareRoomLink());
     document.getElementById('lobby-copy').addEventListener('click', () => this.copyRoomLink());
     document.getElementById('lobby-cancel').addEventListener('click', () => this.cancelLobby());
@@ -1258,6 +1267,7 @@ class CentaurApp {
       const suggestionsLive = this.highlightFen === fenNow && this.highlightSquares.size > 0;
       if (this.assist === 'full' && !highlighted && suggestionsLive) {
         this.view.bounceBack(from);
+        this.sound.invalid();
         this.toast('Only the glowing green moves are allowed on this setting. Pick one of those to finish your turn.');
         this.refreshUI();
         return;
@@ -1285,6 +1295,7 @@ class CentaurApp {
     if (this.assist === 'full' && !highlighted && suggestionsLive) {
       this.state.undo();
       this.view.bounceBack(from);
+      this.sound.invalid();
       this.toast('Only the glowing green moves are allowed on this setting. Pick one of those to finish your turn.');
       this.inputLocked = false;
       this.view.interactive = true;
@@ -1311,6 +1322,7 @@ class CentaurApp {
       if (drop > CONFIG.BLUNDER_DROP_CP) {
         this.state.undo();
         this.view.bounceBack(from);
+        this.sound.invalid();
         this.toast('Whoa, partner caught that one! That move drops the position by over 2 pawns, so it bounced home. The green tiles are safer.');
         this.inputLocked = false;
         this.view.interactive = true;
@@ -1359,6 +1371,7 @@ class CentaurApp {
     this.highlightPairs = [];
     this.view.clearHighlights(); // turn complete: suggestions leave with it
     this.refreshUI();
+    this.playMoveSound(move);
     this.inputLocked = false;
     this.view.interactive = true;
 
@@ -1446,6 +1459,37 @@ class CentaurApp {
     } else {
       // Desync (shouldn't happen): ask the server for the full list.
       this.network.sendSync();
+    }
+  }
+
+  toggleSound() {
+    this.sound.unlock();
+    const muted = this.sound.toggleMuted();
+    this.updateSpeakerIcon();
+    if (!muted) this.sound.click();
+  }
+
+  updateSpeakerIcon() {
+    const muted = this.sound.isMuted();
+    this.el.speakerBtn.classList.toggle('muted', muted);
+    this.el.speakerBtn.setAttribute('aria-label', muted ? 'Sound off' : 'Sound on');
+    this.el.speakerBtn.title = muted ? 'Sound off — tap to turn on' : 'Sound on — tap to mute';
+    this.el.speakerBtn.querySelector('.speaker-on').classList.toggle('hidden', muted);
+    this.el.speakerBtn.querySelector('.speaker-off').classList.toggle('hidden', !muted);
+  }
+
+  playMoveSound(move) {
+    if (this.state.isCheckmate()) {
+      const humanWon = this.mode === 'network' ? this.state.turn() !== this.seat : this.state.turn() === 'b';
+      this.sound.checkmate(humanWon);
+    } else if (this.state.isStalemate() || this.state.isDraw()) {
+      this.sound.draw();
+    } else if (this.state.isCheck()) {
+      this.sound.check();
+    } else if (move.captured) {
+      this.sound.capture();
+    } else {
+      this.sound.move();
     }
   }
 

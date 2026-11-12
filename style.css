@@ -66,6 +66,31 @@ body {
 }
 .friend-btn:hover { background: #2c3847; }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.speaker-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: #e8ecef;
+  background: #232c38;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+}
+.speaker-btn:hover { background: #2c3847; }
+.speaker-btn.muted { opacity: 0.55; }
+.speaker-btn svg { display: block; }
+
 /* Lobby overlay: the tiny pre-game screen for network play. */
 .lobby {
   position: fixed;
