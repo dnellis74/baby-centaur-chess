@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=25';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=25';
-import { SoundManager } from './sound.js?v=25';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=25';
+import { pieceArt } from './pieces.js?v=26';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=26';
+import { SoundManager } from './sound.js?v=26';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=26';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -1025,7 +1025,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=25');
+    this.engine = new EngineBridge('engine-worker.js?v=26');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1100,6 +1100,7 @@ class CentaurApp {
     document.getElementById('play-again').addEventListener('click', () => this.newGame());
     document.getElementById('speaker-btn').addEventListener('click', () => this.toggleSound());
     document.getElementById('back-btn').addEventListener('click', () => this.backToList());
+    document.addEventListener('pointerdown', () => this.clearTurnNotice());
     document.getElementById('new-game-btn').addEventListener('click', () => this.openCreate());
     document.getElementById('create-solo').addEventListener('click', () => this.createSoloGame());
     document.getElementById('create-friend').addEventListener('click', () => this.createFriendGame());
@@ -1445,6 +1446,7 @@ class CentaurApp {
   }
 
   backToList() {
+    this.clearTurnNotice();
     this.persistProgress();
     this.network.disconnect();
     this.mode = 'solo';
@@ -1744,6 +1746,7 @@ class CentaurApp {
   // Remote moves (the opponent's, relayed by the server) share this
   // path but skip the send-back and the solo reply.
   async finalizeMove(res, { remote = false } = {}) {
+    if (!remote) this.clearTurnNotice();
     const move = res.move;
     // En passant captures a pawn that is NOT on the destination square.
     let capturedSquare = null;
@@ -1861,11 +1864,29 @@ class CentaurApp {
     this.refreshAnalysis().then(() => this.maybeAutoHint());
   }
 
+  // The other player just moved and the game is now waiting on
+  // THIS device: chime, and mark the tab title until the player
+  // acts. Deliberately network-only; in solo the engine answers
+  // instantly and a chime every move would just be noise.
+  notifyYourTurn() {
+    try { this.sound.yourTurn(); } catch { /* sound never breaks play */ }
+    if (!this.baseTitle) this.baseTitle = document.title;
+    document.title = `Your move! - ${this.baseTitle}`;
+    this.turnNoticeOn = true;
+  }
+
+  clearTurnNotice() {
+    if (!this.turnNoticeOn) return;
+    this.turnNoticeOn = false;
+    if (this.baseTitle) document.title = this.baseTitle;
+  }
+
   applyRemoteMove(m) {
     if (this.mode !== 'network' || this.state.isGameOver()) return;
     const res = this.state.tryMove(m.from, m.to, m.promotion || 'q');
     if (res) {
       this.finalizeMove(res, { remote: true });
+      if (this.isHumanTurn() && !this.state.isGameOver()) this.notifyYourTurn();
     } else {
       // Desync (shouldn't happen): ask the server for the full list.
       netLog(`desync: remote move ${m.from}-${m.to} did not apply locally; requesting sync`);

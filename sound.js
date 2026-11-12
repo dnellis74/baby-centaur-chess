@@ -127,4 +127,11 @@ export class SoundManager {
   }
 
   click() { this.tone({ freq: 900, dur: 0.04, type: 'sine', gain: 0.06 }); }
+
+  yourTurn() {
+    // A friendly two-note rise, distinct from the move sounds, so a
+    // player in another tab or app knows the game is waiting on them.
+    this.tone({ freq: 587, dur: 0.11, type: 'triangle', gain: 0.13 });
+    this.tone({ freq: 880, dur: 0.15, type: 'triangle', gain: 0.13, when: 0.1 });
+  }
 }
