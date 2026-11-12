@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Baby Centaur Chess</title>
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=25" />
 
   <!--
     No build step. This page uses ES modules + import maps, which require
@@ -92,6 +92,7 @@
       <div class="lobby-row">
         <button class="lobby-btn hidden" id="lobby-share" type="button">Share link</button>
         <button class="lobby-btn hidden" id="lobby-copy" type="button">Copy link</button>
+        <button class="lobby-btn hidden" id="lobby-play" type="button">Start playing</button>
         <button class="lobby-btn" id="lobby-cancel" type="button">Back</button>
       </div>
     </div>
@@ -99,8 +100,8 @@
 
   <div class="lobby hidden" id="link-overlay">
     <div class="lobby-card">
-      <h2>Game link</h2>
-      <p class="lobby-status">This is the game's one link. Send it to your friend to invite them, or open it on your other device to play your seat there. First time on a new device it asks which player you are. Keep it private: anyone with it can join the game.</p>
+      <h2>Play as you on another device</h2>
+      <p class="lobby-status">Open this link on your phone or in another browser and that device plays your seat in this game. Anyone with this link plays as you, so keep it private.</p>
       <input class="lobby-link" id="device-link" readonly />
       <div class="lobby-row">
         <button class="lobby-btn" id="device-copy" type="button">Copy link</button>
@@ -109,17 +110,6 @@
     </div>
   </div>
 
-  <div class="lobby hidden" id="who-overlay">
-    <div class="lobby-card">
-      <h2 id="who-name">Friend game</h2>
-      <p class="lobby-status">First time on this device: which player are you? This device will remember.</p>
-      <div class="lobby-row">
-        <button class="lobby-btn" id="who-white" type="button">I am White</button>
-        <button class="lobby-btn" id="who-black" type="button">I am Black</button>
-      </div>
-    </div>
-  </div>
-
-  <script type="module" src="app.js?v=24"></script>
+  <script type="module" src="app.js?v=25"></script>
 </body>
 </html>
