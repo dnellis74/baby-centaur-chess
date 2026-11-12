@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=21';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=21';
-import { SoundManager } from './sound.js?v=21';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=21';
+import { pieceArt } from './pieces.js?v=22';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=22';
+import { SoundManager } from './sound.js?v=22';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=22';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -858,6 +858,7 @@ class NetworkSyncBridge {
     this.playerId = playerId;
     this.wantConnection = true;
     this.reconnectDelay = 1000;
+    this.refusedFull = false;
     netLog(`connect room=${roomId} player=${playerId} url=${url}`);
     return new Promise((resolve) => {
       this.pendingWelcome = { resolve };
@@ -919,6 +920,16 @@ class NetworkSyncBridge {
         netLog(`server error: ${msg.message}`);
       } else if (msg.type === 'full') {
         netLog('room FULL: server refused the join');
+        // A full room is a definitive no: fail the pending connect
+        // fast instead of leaving it to the 10s timeout, and stop
+        // the reconnect loop from retrying a room that has no seat.
+        this.refusedFull = true;
+        if (this.pendingWelcome) {
+          const { resolve, timer } = this.pendingWelcome;
+          this.pendingWelcome = null;
+          clearTimeout(timer);
+          resolve({ type: 'full', full: true });
+        }
       }
       // 'error' and 'full' need no UI: a rejected move is simply not
       // relayed, and a full room only happens with a shared link.
@@ -926,7 +937,7 @@ class NetworkSyncBridge {
     ws.addEventListener('close', (event) => {
       netLog(`socket CLOSE room=${this.roomId} code=${event.code} reason=${event.reason || '(none)'}`);
       if (this.ws === ws) this.ws = null;
-      this.scheduleReconnect();
+      if (!this.refusedFull) this.scheduleReconnect();
     });
     ws.addEventListener('error', () => {
       netLog(`socket ERROR room=${this.roomId}`);
@@ -1014,7 +1025,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=21');
+    this.engine = new EngineBridge('engine-worker.js?v=22');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1340,6 +1351,13 @@ class CentaurApp {
     this.el.message.textContent = 'Connecting...';
     const playerId = this.playerIdForRoom(entry.roomId);
     const welcome = await this.network.connect(this.workerUrl, entry.roomId, playerId);
+    if (welcome && welcome.full) {
+      netLog(`openFriendGame room=${entry.roomId}: room already has two players`);
+      this.toast('That game already has two players.');
+      this.currentId = null; // nothing was opened; persist nothing
+      this.backToList();
+      return;
+    }
     if (!welcome) {
       netLog(`openFriendGame room=${entry.roomId}: no welcome, giving up to the list`);
       this.toast("Couldn't reach the game server.");
