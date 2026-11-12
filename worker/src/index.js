@@ -47,6 +47,14 @@ export class Room {
     this.loaded = null; // promise, so concurrent fetches share one load
   }
 
+  // Debug log (visible via `npx wrangler tail` or the dashboard's
+  // worker logs). Sparse on purpose: joins, moves, probes, refusals.
+  log(...args) {
+    let id = '?';
+    try { if (this.ctx.id) id = String(this.ctx.id).slice(0, 8); } catch { /* stub ctx in tests */ }
+    console.log(`[room ${id}]`, ...args);
+  }
+
   async ensureLoaded() {
     if (!this.loaded) {
       this.loaded = (async () => {
@@ -84,6 +92,7 @@ export class Room {
         w: Object.values(this.players).includes('w'),
         b: Object.values(this.players).includes('b'),
       };
+      this.log(`state probe plies=${this.moves.length} seats w=${seats.w} b=${seats.b}`);
       return new Response(JSON.stringify({ plies: this.moves.length, seats }), {
         headers: {
           'Content-Type': 'application/json',
@@ -170,10 +179,12 @@ export class Room {
         session.seat = 'b';
         this.players[msg.playerId] = 'b';
       } else {
+        this.log(`join REFUSED (room full) player=${msg.playerId.slice(0, 8)}`);
         this.send(ws, { type: 'full' });
         ws.close(1008, 'room is full');
         return;
       }
+      this.log(`join player=${msg.playerId.slice(0, 8)} seat=${session.seat} players=${Object.keys(this.players).length} plies=${this.moves.length}`);
       await this.save();
       await this.welcome(ws, session);
       // Tell the other seat a friend arrived.
@@ -191,17 +202,20 @@ export class Room {
       const okPromo = msg.promotion === undefined || msg.promotion === null
         || PROMOTIONS.has(msg.promotion);
       if (session.seat !== turn || !okSquares || !okPromo) {
+        this.log(`move REJECTED ${msg.from}-${msg.to} by=${session.seat} (turn=${turn})`);
         this.send(ws, { type: 'error', message: 'not your turn or bad move' });
         return;
       }
       const move = { from: msg.from, to: msg.to, promotion: msg.promotion || null };
       this.moves.push(move);
+      this.log(`move ${move.from}-${move.to}${move.promotion || ''} by=${session.seat} plies=${this.moves.length}`);
       await this.save();
       this.sendToSeat(this.otherSeat(session.seat), { ...move, type: 'move', by: session.seat });
       return;
     }
 
     if (msg.type === 'rematch') {
+      this.log(`rematch by=${session.seat}`);
       this.moves = [];
       await this.save();
       this.sendToSeat(this.otherSeat(session.seat), { type: 'reset' });

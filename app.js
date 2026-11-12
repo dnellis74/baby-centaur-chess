@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=20';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=20';
-import { SoundManager } from './sound.js?v=20';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=20';
+import { pieceArt } from './pieces.js?v=21';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=21';
+import { SoundManager } from './sound.js?v=21';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=21';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -133,6 +133,20 @@ async function fetchRoomState(workerUrl, roomId) {
 // localStorage can throw on access in locked-down contexts.
 function safeLocalStorage() {
   try { return window.localStorage; } catch { return null; }
+}
+
+// Network debug log: every worker connection event, prefixed so it
+// can be filtered and pasted out of the console ([bcc-net]). On by
+// default; set localStorage 'bcc-netlog' to '0' to silence it.
+// Logging is best-effort and must never break play.
+const NETLOG_T0 = Date.now();
+const NETLOG_OFF = (() => {
+  try { return localStorage.getItem('bcc-netlog') === '0'; } catch { return false; }
+})();
+function netLog(...args) {
+  if (NETLOG_OFF) return;
+  const secs = ((Date.now() - NETLOG_T0) / 1000).toFixed(1);
+  try { console.info(`[bcc-net +${secs}s]`, ...args); } catch { /* ignore */ }
 }
 
 /* ------------------------------------------------------------------ */
@@ -844,10 +858,12 @@ class NetworkSyncBridge {
     this.playerId = playerId;
     this.wantConnection = true;
     this.reconnectDelay = 1000;
+    netLog(`connect room=${roomId} player=${playerId} url=${url}`);
     return new Promise((resolve) => {
       this.pendingWelcome = { resolve };
       const timer = setTimeout(() => {
         if (this.pendingWelcome) {
+          netLog(`connect TIMEOUT room=${roomId}: no welcome within ${timeoutMs}ms`);
           this.pendingWelcome = null;
           resolve(null);
         }
@@ -862,12 +878,14 @@ class NetworkSyncBridge {
     let ws;
     try {
       ws = new WebSocket(`${this.url}/room/${this.roomId}`);
-    } catch {
+    } catch (err) {
+      netLog(`socket create FAILED room=${this.roomId}: ${err && err.message}`);
       this.scheduleReconnect();
       return;
     }
     this.ws = ws;
     ws.addEventListener('open', () => {
+      netLog(`socket OPEN room=${this.roomId}; sending join player=${this.playerId}`);
       this.reconnectDelay = 1000;
       this.sendRaw({ type: 'join', playerId: this.playerId });
     });
@@ -879,6 +897,7 @@ class NetworkSyncBridge {
         return;
       }
       if (msg.type === 'welcome') {
+        netLog(`welcome seat=${msg.seat} moves=${(msg.moves || []).length} peer=${msg.peer}`);
         if (this.pendingWelcome) {
           const { resolve, timer } = this.pendingWelcome;
           this.pendingWelcome = null;
@@ -888,20 +907,29 @@ class NetworkSyncBridge {
           for (const cb of this.welcomeHandlers) cb(msg);
         }
       } else if (msg.type === 'move') {
+        netLog(`remote move ${msg.from}-${msg.to}${msg.promotion || ''} by=${msg.by}`);
         for (const cb of this.remoteHandlers) cb(msg);
       } else if (msg.type === 'peer') {
+        netLog(`peer ${msg.connected ? 'connected' : 'left'}`);
         for (const cb of this.peerHandlers) cb(msg.connected);
       } else if (msg.type === 'reset') {
+        netLog('remote reset (rematch)');
         for (const cb of this.resetHandlers) cb();
+      } else if (msg.type === 'error') {
+        netLog(`server error: ${msg.message}`);
+      } else if (msg.type === 'full') {
+        netLog('room FULL: server refused the join');
       }
       // 'error' and 'full' need no UI: a rejected move is simply not
       // relayed, and a full room only happens with a shared link.
     });
-    ws.addEventListener('close', () => {
+    ws.addEventListener('close', (event) => {
+      netLog(`socket CLOSE room=${this.roomId} code=${event.code} reason=${event.reason || '(none)'}`);
       if (this.ws === ws) this.ws = null;
       this.scheduleReconnect();
     });
     ws.addEventListener('error', () => {
+      netLog(`socket ERROR room=${this.roomId}`);
       // Close follows; the close handler schedules the reconnect.
     });
   }
@@ -909,6 +937,7 @@ class NetworkSyncBridge {
   scheduleReconnect() {
     if (!this.wantConnection || this.reconnectTimer) return;
     const delay = this.reconnectDelay;
+    netLog(`reconnect scheduled in ${delay}ms room=${this.roomId}`);
     this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -929,20 +958,26 @@ class NetworkSyncBridge {
   }
 
   sendMove(move) {
-    return this.sendRaw({
+    const ok = this.sendRaw({
       type: 'move',
       from: move.from,
       to: move.to,
       promotion: move.promotion || null,
     });
+    netLog(`send move ${move.from}-${move.to}${move.promotion || ''} -> ${ok ? 'sent' : 'FAILED (socket down)'}`);
+    return ok;
   }
 
   sendRematch() {
-    return this.sendRaw({ type: 'rematch' });
+    const ok = this.sendRaw({ type: 'rematch' });
+    netLog(`send rematch -> ${ok ? 'sent' : 'FAILED (socket down)'}`);
+    return ok;
   }
 
   sendSync() {
-    return this.sendRaw({ type: 'sync' });
+    const ok = this.sendRaw({ type: 'sync' });
+    netLog(`send sync -> ${ok ? 'sent' : 'FAILED (socket down)'}`);
+    return ok;
   }
 
   onRemoteMove(cb) { this.remoteHandlers.push(cb); }
@@ -951,6 +986,7 @@ class NetworkSyncBridge {
   onReset(cb) { this.resetHandlers.push(cb); }
 
   disconnect() {
+    netLog(`disconnect room=${this.roomId}`);
     this.wantConnection = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -978,7 +1014,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=20');
+    this.engine = new EngineBridge('engine-worker.js?v=21');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1088,6 +1124,7 @@ class CentaurApp {
     const params = new URLSearchParams(location.search);
     const roomId = params.get('room');
     if (roomId && this.workerUrl) {
+      netLog(`room link opened room=${roomId} name=${params.get('name') || '(none)'}`);
       let entry = this.library.get(roomId);
       if (!entry) {
         entry = this.library.upsert({
@@ -1304,6 +1341,7 @@ class CentaurApp {
     const playerId = this.playerIdForRoom(entry.roomId);
     const welcome = await this.network.connect(this.workerUrl, entry.roomId, playerId);
     if (!welcome) {
+      netLog(`openFriendGame room=${entry.roomId}: no welcome, giving up to the list`);
       this.toast("Couldn't reach the game server.");
       this.currentId = null; // nothing was opened; persist nothing
       this.backToList();
@@ -1770,6 +1808,7 @@ class CentaurApp {
       this.finalizeMove(res, { remote: true });
     } else {
       // Desync (shouldn't happen): ask the server for the full list.
+      netLog(`desync: remote move ${m.from}-${m.to} did not apply locally; requesting sync`);
       this.network.sendSync();
     }
   }
