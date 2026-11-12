@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=27';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=27';
-import { SoundManager } from './sound.js?v=27';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=27';
+import { pieceArt } from './pieces.js?v=28';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=28';
+import { SoundManager } from './sound.js?v=28';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=28';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -1039,7 +1039,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=27');
+    this.engine = new EngineBridge('engine-worker.js?v=28');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1634,6 +1634,14 @@ class CentaurApp {
     return to[1] === lastRank && this.state.isLegal(from, to);
   }
 
+  // A move is suggested only as an exact (from, to) pair. Checking the
+  // destination alone would let a different piece that can also reach
+  // a green square pass, even though its move was never suggested.
+  isSuggestedMove(from, to, fen) {
+    return this.highlightFen === fen
+      && this.highlightPairs.some((p) => p.from === from && p.to === to);
+  }
+
   // The partner's suggested promotion: queen, unless queening stalemates
   // the opponent and throws away the win, in which case the highest-value
   // promotion that does not stalemate. Instant and local: no engine wait.
@@ -1696,11 +1704,11 @@ class CentaurApp {
 
     // Promotion: a pawn reaching the last rank opens the picker instead
     // of auto-queening, so the kid chooses (with the partner's pick
-    // suggested). At Full assist a non-suggested destination still
+    // suggested). At Full assist a non-suggested move still
     // bounces first, evaluated pre-move exactly like the gate below.
     if (!promotion && this.isPromotionAttempt(from, to)) {
       const fenNow = this.state.fen();
-      const highlighted = this.highlightFen === fenNow && this.highlightSquares.has(to);
+      const highlighted = this.isSuggestedMove(from, to, fenNow);
       const suggestionsLive = this.highlightFen === fenNow && this.highlightSquares.size > 0;
       if (this.assist === 'full' && !highlighted && suggestionsLive) {
         this.view.bounceBack(from);
@@ -1725,7 +1733,7 @@ class CentaurApp {
     this.inputLocked = true;
     this.view.interactive = false;
 
-    const highlighted = this.highlightFen === res.fenBefore && this.highlightSquares.has(to);
+    const highlighted = this.isSuggestedMove(from, to, res.fenBefore);
     const suggestionsLive = this.highlightFen === res.fenBefore && this.highlightSquares.size > 0;
 
     // Default setting: only suggested moves are playable.
