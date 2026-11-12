@@ -16,9 +16,9 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=17';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=17';
-import { SoundManager } from './sound.js?v=17';
+import { pieceArt } from './pieces.js?v=18';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=18';
+import { SoundManager } from './sound.js?v=18';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -170,6 +170,10 @@ class GameStateManager extends Emitter {
   }
 
   isGameOver() { return this.chess.isGameOver(); }
+  isCheck() { return this.chess.isCheck(); }
+  isCheckmate() { return this.chess.isCheckmate(); }
+  isStalemate() { return this.chess.isStalemate(); }
+  isDraw() { return this.chess.isDraw(); }
 
   // chess.board() is rank 8 -> rank 1; flatten to [{ square, type, color }].
   pieces() {
@@ -938,7 +942,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=17');
+    this.engine = new EngineBridge('engine-worker.js?v=18');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1371,7 +1375,8 @@ class CentaurApp {
     this.highlightPairs = [];
     this.view.clearHighlights(); // turn complete: suggestions leave with it
     this.refreshUI();
-    this.playMoveSound(move);
+    // Sound must never break play: if it throws, the board still unlocks.
+    try { this.playMoveSound(move); } catch { /* sound is best-effort */ }
     this.inputLocked = false;
     this.view.interactive = true;
 
