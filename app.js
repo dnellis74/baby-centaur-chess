@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=26';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=26';
-import { SoundManager } from './sound.js?v=26';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=26';
+import { pieceArt } from './pieces.js?v=27';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=27';
+import { SoundManager } from './sound.js?v=27';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=27';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -253,6 +253,7 @@ class BoardView {
     this.cb = callbacks; // { onSelect(square), onDrop(from, to), onTileClick(square) }
     this.flipped = false;
     this.turn = 'w';
+    this.myColor = 'w'; // the color THIS player may move (network: their seat)
     this.interactive = true;
 
     // Zoomable board element. The toast stays a sibling in the
@@ -603,7 +604,9 @@ class BoardView {
       this.downInfo = { time: performance.now(), x: e.clientX, y: e.clientY, hitPiece: !!piece };
       if (!square) return;
       if (piece) {
-        if (piece.color !== this.turn) {
+        if (piece.color !== this.turn || piece.color !== this.myColor) {
+          // Not a piece this player may move right now: the other
+          // side's pieces, or anything on the other side's turn.
           // Clicking an enemy piece with a selection armed = capture attempt.
           if (this.selectedSquare) this.cb.onTileClick(square);
           return;
@@ -850,6 +853,7 @@ class NetworkSyncBridge {
     this.welcomeHandlers = [];
     this.peerHandlers = [];
     this.resetHandlers = [];
+    this.resignedHandlers = [];
   }
 
   connect(url, roomId, playerId, timeoutMs = 10000) {
@@ -916,6 +920,9 @@ class NetworkSyncBridge {
       } else if (msg.type === 'reset') {
         netLog('remote reset (rematch)');
         for (const cb of this.resetHandlers) cb();
+      } else if (msg.type === 'resigned') {
+        netLog(`peer conceded seat=${msg.seat}`);
+        for (const cb of this.resignedHandlers) cb(msg.seat);
       } else if (msg.type === 'error') {
         netLog(`server error: ${msg.message}`);
       } else if (msg.type === 'full') {
@@ -985,6 +992,12 @@ class NetworkSyncBridge {
     return ok;
   }
 
+  sendResign() {
+    const ok = this.sendRaw({ type: 'resign' });
+    netLog(`send resign -> ${ok ? 'sent' : 'FAILED (socket down)'}`);
+    return ok;
+  }
+
   sendSync() {
     const ok = this.sendRaw({ type: 'sync' });
     netLog(`send sync -> ${ok ? 'sent' : 'FAILED (socket down)'}`);
@@ -995,6 +1008,7 @@ class NetworkSyncBridge {
   onWelcome(cb) { this.welcomeHandlers.push(cb); }
   onPeer(cb) { this.peerHandlers.push(cb); }
   onReset(cb) { this.resetHandlers.push(cb); }
+  onResigned(cb) { this.resignedHandlers.push(cb); }
 
   disconnect() {
     netLog(`disconnect room=${this.roomId}`);
@@ -1025,7 +1039,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=26');
+    this.engine = new EngineBridge('engine-worker.js?v=27');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1053,6 +1067,8 @@ class CentaurApp {
     // connects to its room.
     this.seat = null;
     this.pendingMove = null;
+    this.resigned = null; // seat that conceded ('w'/'b'), or null
+    this.concedeArmed = false;
     const params = new URLSearchParams(location.search);
     this.roomId = params.get('room');
     this.workerUrl = params.get('worker') || WORKER_URL;
@@ -1073,6 +1089,7 @@ class CentaurApp {
     this.el = {
       message: document.getElementById('message-text'),
       playAgain: document.getElementById('play-again'),
+      concede: document.getElementById('concede-btn'),
       capturedByWhite: document.getElementById('captured-by-white'),
       capturedByBlack: document.getElementById('captured-by-black'),
       evalFill: document.getElementById('eval-fill'),
@@ -1098,6 +1115,7 @@ class CentaurApp {
     };
 
     document.getElementById('play-again').addEventListener('click', () => this.newGame());
+    document.getElementById('concede-btn').addEventListener('click', () => this.concede());
     document.getElementById('speaker-btn').addEventListener('click', () => this.toggleSound());
     document.getElementById('back-btn').addEventListener('click', () => this.backToList());
     document.addEventListener('pointerdown', () => this.clearTurnNotice());
@@ -1129,6 +1147,7 @@ class CentaurApp {
         : 'Your friend left. The game waits here until they come back.');
     });
     this.network.onReset(() => this.newGame({ remote: true }));
+    this.network.onResigned((seat) => this.applyResign(seat));
     if (FLIPPED) this.view.setFlipped(true);
     if (this.assist === 'off') this.el.evalLabel.textContent = '—';
     // Friend games need the worker; without one, creation is solo-only.
@@ -1304,6 +1323,7 @@ class CentaurApp {
   openEntry(id) {
     const entry = this.library.get(id);
     if (!entry) return;
+    this.resigned = entry.resigned || null;
     if (entry.kind === 'solo') this.openSoloGame(entry);
     else this.openFriendGame(entry);
   }
@@ -1349,6 +1369,7 @@ class CentaurApp {
     this.currentId = entry.id;
     this.mode = 'solo';
     this.seat = null;
+    this.resigned = entry.resigned || null;
     this.showGameView();
     this.setGameUrl({ game: entry.id });
     const engineOk = await this.engine.init();
@@ -1368,7 +1389,7 @@ class CentaurApp {
     this.inputLocked = false;
     this.view.interactive = true;
     this.refreshUI();
-    if (this.state.isGameOver()) return;
+    if (this.gameOver()) return;
     if (this.state.turn() === 'b') this.aiReply();
     else this.refreshAnalysis().then(() => this.maybeAutoHint());
   }
@@ -1439,8 +1460,9 @@ class CentaurApp {
       entry.plies = this.state.history().length;
       if (this.seat) entry.seat = this.seat;
     }
-    entry.finished = this.state.isGameOver();
-    entry.result = entry.finished ? this.state.statusText() : '';
+    entry.finished = this.gameOver();
+    entry.resigned = this.resigned || null;
+    entry.result = entry.finished ? (this.resigned ? this.resignText() : this.state.statusText()) : '';
     entry.updatedAt = Date.now();
     this.library.upsert(entry);
   }
@@ -1469,9 +1491,12 @@ class CentaurApp {
   }
 
   refreshUI() {
-    this.el.message.textContent = this.state.statusText();
-    this.el.playAgain.classList.toggle('hidden', !this.state.isGameOver());
+    const over = this.gameOver();
+    this.el.message.textContent = this.resigned ? this.resignText() : this.state.statusText();
+    this.el.playAgain.classList.toggle('hidden', !over);
+    this.el.concede.classList.toggle('hidden', over || !this.currentId);
     this.view.turn = this.state.turn();
+    this.view.myColor = this.mode === 'network' ? (this.seat || 'w') : 'w';
     // Captured tray: pieces each side has taken, strongest first.
     // chess.js verbose history marks every capture, en passant included.
     const byWhite = [];
@@ -1545,7 +1570,7 @@ class CentaurApp {
   // cached analysis when it matches the current position.
   async maybeAutoHint() {
     if (!this.autoHints || this.assist === 'off') return;
-    if (this.inputLocked || this.state.isGameOver() || !this.isHumanTurn()) return;
+    if (this.inputLocked || this.gameOver() || !this.isHumanTurn()) return;
     const fen = this.state.fen();
     let lines = null;
     if (this.cachedAnalysis && this.cachedAnalysis.fen === fen) {
@@ -1567,7 +1592,7 @@ class CentaurApp {
   /* Partner interaction -------------------------------------------- */
 
   async onSelect(square) {
-    if (this.inputLocked || this.state.isGameOver()) return;
+    if (this.inputLocked || this.gameOver()) return;
     if (this.assist === 'off') return; // partner stays quiet at zero assist
     const fen = this.state.fen();
     const lines = await this.engine.analyze(fen);
@@ -1663,7 +1688,11 @@ class CentaurApp {
   }
 
   async handleHumanMove(from, to, promotion = null) {
-    if (this.inputLocked || this.state.isGameOver()) { this.view.snapBack(from); return; }
+    if (this.inputLocked || this.gameOver()) { this.view.snapBack(from); return; }
+    // Seat gate: in a network game you may only move your own color
+    // on your own turn. (The view also refuses pickup; this is the
+    // choke point every input path funnels through.)
+    if (!this.isHumanTurn()) { this.view.snapBack(from); return; }
 
     // Promotion: a pawn reaching the last rank opens the picker instead
     // of auto-queening, so the kid chooses (with the partner's pick
@@ -1811,6 +1840,9 @@ class CentaurApp {
 
   newGame({ remote = false } = {}) {
     this.closePromotionPicker();
+    this.resigned = null;
+    this.concedeArmed = false;
+    this.el.concede.textContent = 'Concede';
     this.state.reset();
     this.view.setPieces(this.state.pieces());
     this.view.clearHighlights();
@@ -1838,6 +1870,7 @@ class CentaurApp {
   // while offline and never reached the server.
   applyWelcome(data) {
     if (data.seat) this.seat = data.seat;
+    this.resigned = data.resigned || null;
     // In network mode your pieces sit at the bottom, whatever the
     // solo FLIPPED setting says.
     this.view.setFlipped(this.seat === 'b');
@@ -1881,12 +1914,58 @@ class CentaurApp {
     if (this.baseTitle) document.title = this.baseTitle;
   }
 
+  // Game over on the board (mate, stalemate, draw) or by concession.
+  gameOver() {
+    return this.state.isGameOver() || !!this.resigned;
+  }
+
+  resignText() {
+    const winner = this.resigned === 'w' ? 'Black' : 'White';
+    if (this.mode === 'network' && this.resigned !== this.seat) {
+      return `Your friend gave up. ${winner} wins.`;
+    }
+    return `You gave up. ${winner} wins.`;
+  }
+
+  // Two taps, like the list's remove: the first tap arms the button
+  // for 3 seconds, the second concedes. Accidental single taps by
+  // small hands must never end a game.
+  concede() {
+    if (this.gameOver() || !this.currentId) return;
+    if (!this.concedeArmed) {
+      this.concedeArmed = true;
+      this.el.concede.textContent = 'Really? Tap again';
+      setTimeout(() => {
+        this.concedeArmed = false;
+        this.el.concede.textContent = 'Concede';
+      }, 3000);
+      return;
+    }
+    this.concedeArmed = false;
+    this.el.concede.textContent = 'Concede';
+    const seat = this.mode === 'network' ? this.seat : 'w';
+    if (!seat) return;
+    if (this.mode === 'network') this.network.sendResign();
+    this.applyResign(seat);
+  }
+
+  applyResign(seat) {
+    if (this.resigned) return;
+    this.resigned = seat;
+    this.clearTurnNotice();
+    const winnerIsMe = this.mode === 'network' ? seat !== this.seat : seat !== 'w';
+    try { this.sound.checkmate(winnerIsMe); } catch { /* sound never breaks play */ }
+    netLog(`game conceded by=${seat}`);
+    this.refreshUI();
+    this.persistProgress();
+  }
+
   applyRemoteMove(m) {
-    if (this.mode !== 'network' || this.state.isGameOver()) return;
+    if (this.mode !== 'network' || this.gameOver()) return;
     const res = this.state.tryMove(m.from, m.to, m.promotion || 'q');
     if (res) {
       this.finalizeMove(res, { remote: true });
-      if (this.isHumanTurn() && !this.state.isGameOver()) this.notifyYourTurn();
+      if (this.isHumanTurn() && !this.gameOver()) this.notifyYourTurn();
     } else {
       // Desync (shouldn't happen): ask the server for the full list.
       netLog(`desync: remote move ${m.from}-${m.to} did not apply locally; requesting sync`);

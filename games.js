@@ -81,6 +81,7 @@ export class GameLibrary {
 // has seen with the game open.
 export function gameStatus(entry, live) {
   if (entry.finished) return { key: 'finished', label: entry.result || 'Finished' };
+  if (live && live.resigned) return { key: 'finished', label: 'Finished' };
   if (entry.kind === 'solo') return { key: 'your', label: 'Your move' };
 
   const plies = live ? live.plies : (entry.plies || 0);

@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Baby Centaur Chess</title>
-  <link rel="stylesheet" href="style.css?v=26" />
+  <link rel="stylesheet" href="style.css?v=27" />
 
   <!--
     No build step. This page uses ES modules + import maps, which require
@@ -61,6 +61,7 @@
           <div class="message-box">
             <p class="message-text" id="message-text">White to move</p>
             <button class="play-again-btn hidden" id="play-again" type="button">Play again</button>
+            <button class="play-again-btn hidden" id="concede-btn" type="button">Concede</button>
           </div>
           <div class="captured-box">
             <div class="captured-row"><span class="captured-label">White took</span><span class="captured-icons" id="captured-by-white"></span></div>
@@ -110,6 +111,6 @@
     </div>
   </div>
 
-  <script type="module" src="app.js?v=26"></script>
+  <script type="module" src="app.js?v=27"></script>
 </body>
 </html>

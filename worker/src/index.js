@@ -11,12 +11,14 @@
  *     { type: 'join', playerId }          first message on every socket
  *     { type: 'move', from, to, promotion? }
  *     { type: 'rematch' }                 reset the room for a new game
+ *     { type: 'resign' }                  concede; ends the game
  *     { type: 'sync' }                    ask for a full welcome resync
  *   Server -> client:
- *     { type: 'welcome', seat, moves, peer }
+ *     { type: 'welcome', seat, moves, peer, resigned }
  *     { type: 'move', from, to, promotion, by }
  *     { type: 'peer', connected }
  *     { type: 'reset' }
+ *     { type: 'resigned', seat }          a player conceded
  *     { type: 'error', message }
  *     { type: 'full' }                    both seats taken, socket closes
  *
@@ -44,6 +46,7 @@ export class Room {
     this.sockets = new Map(); // ws -> { playerId, seat }
     this.players = null; // playerId -> seat, loaded lazily
     this.moves = null; // [{ from, to, promotion }], loaded lazily
+    this.resigned = null; // seat that conceded ('w'/'b'), loaded lazily
     this.loaded = null; // promise, so concurrent fetches share one load
   }
 
@@ -58,12 +61,14 @@ export class Room {
   async ensureLoaded() {
     if (!this.loaded) {
       this.loaded = (async () => {
-        const [players, moves] = await Promise.all([
+        const [players, moves, resigned] = await Promise.all([
           this.ctx.storage.get('players'),
           this.ctx.storage.get('moves'),
+          this.ctx.storage.get('resigned'),
         ]);
         this.players = players || {};
         this.moves = moves || [];
+        this.resigned = resigned || null;
       })();
     }
     return this.loaded;
@@ -73,6 +78,7 @@ export class Room {
     await Promise.all([
       this.ctx.storage.put('players', this.players),
       this.ctx.storage.put('moves', this.moves),
+      this.ctx.storage.put('resigned', this.resigned),
     ]);
     // Sliding expiry: every mutation pushes the room's death out.
     await this.ctx.storage.setAlarm(Date.now() + ROOM_TTL_MS);
@@ -93,7 +99,7 @@ export class Room {
         b: Object.values(this.players).includes('b'),
       };
       this.log(`state probe plies=${this.moves.length} seats w=${seats.w} b=${seats.b}`);
-      return new Response(JSON.stringify({ plies: this.moves.length, seats }), {
+      return new Response(JSON.stringify({ plies: this.moves.length, seats, resigned: this.resigned }), {
         headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': '*',
@@ -150,6 +156,7 @@ export class Room {
       seat: session.seat,
       moves: this.moves,
       peer: this.seatConnected(this.otherSeat(session.seat)),
+      resigned: this.resigned,
     });
   }
 
@@ -196,6 +203,10 @@ export class Room {
     if (!session.seat) return;
 
     if (msg.type === 'move') {
+      if (this.resigned) {
+        this.send(ws, { type: 'error', message: 'game is over' });
+        return;
+      }
       const turn = this.moves.length % 2 === 0 ? 'w' : 'b';
       const okSquares = typeof msg.from === 'string' && SQUARE.test(msg.from)
         && typeof msg.to === 'string' && SQUARE.test(msg.to);
@@ -214,9 +225,20 @@ export class Room {
       return;
     }
 
+    if (msg.type === 'resign') {
+      if (!this.resigned) {
+        this.resigned = session.seat;
+        this.log(`resign by=${session.seat} plies=${this.moves.length}`);
+        await this.save();
+        this.sendToSeat(this.otherSeat(session.seat), { type: 'resigned', seat: session.seat });
+      }
+      return;
+    }
+
     if (msg.type === 'rematch') {
       this.log(`rematch by=${session.seat}`);
       this.moves = [];
+      this.resigned = null;
       await this.save();
       this.sendToSeat(this.otherSeat(session.seat), { type: 'reset' });
       return;
