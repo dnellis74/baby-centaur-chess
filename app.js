@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=19';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=19';
-import { SoundManager } from './sound.js?v=19';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=19';
+import { pieceArt } from './pieces.js?v=20';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=20';
+import { SoundManager } from './sound.js?v=20';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=20';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -978,7 +978,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=19');
+    this.engine = new EngineBridge('engine-worker.js?v=20');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1291,6 +1291,13 @@ class CentaurApp {
     this.roomId = entry.roomId;
     this.showGameView();
     this.setGameUrl({ room: entry.roomId, name: entry.name });
+    // Clear the previous game off the board while connecting, so a
+    // friend game never flashes someone else's position behind the
+    // "Connecting..." message. The welcome replays the real moves.
+    this.state.reset();
+    this.view.setPieces(this.state.pieces());
+    this.view.clearHighlights();
+    this.view.clearSelection();
     const engineOk = await this.engine.init();
     if (!engineOk) this.toast('Partner unavailable (engine failed to load) — playing without hints');
     this.el.message.textContent = 'Connecting...';
