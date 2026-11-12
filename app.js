@@ -16,10 +16,10 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=23';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=23';
-import { SoundManager } from './sound.js?v=23';
-import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=23';
+import { pieceArt } from './pieces.js?v=24';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=24';
+import { SoundManager } from './sound.js?v=24';
+import { GameLibrary, gameStatus, suggestedGameName } from './games.js?v=24';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -1025,7 +1025,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=23');
+    this.engine = new EngineBridge('engine-worker.js?v=24');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -1092,11 +1092,12 @@ class CentaurApp {
       lobbyShare: document.getElementById('lobby-share'),
       lobbyCopy: document.getElementById('lobby-copy'),
       lobbyCancel: document.getElementById('lobby-cancel'),
-      lobbyDeviceLabel: document.getElementById('lobby-device-label'),
-      lobbyDeviceLink: document.getElementById('lobby-device-link'),
-      lobbyDeviceCopy: document.getElementById('lobby-device-copy'),
       linkOverlay: document.getElementById('link-overlay'),
       deviceLink: document.getElementById('device-link'),
+      whoOverlay: document.getElementById('who-overlay'),
+      whoName: document.getElementById('who-name'),
+      whoWhite: document.getElementById('who-white'),
+      whoBlack: document.getElementById('who-black'),
     };
 
     document.getElementById('play-again').addEventListener('click', () => this.newGame());
@@ -1114,7 +1115,6 @@ class CentaurApp {
     document.getElementById('lobby-share').addEventListener('click', () => this.shareRoomLink());
     document.getElementById('lobby-copy').addEventListener('click', () => this.copyRoomLink());
     document.getElementById('lobby-cancel').addEventListener('click', () => this.cancelLobby());
-    document.getElementById('lobby-device-copy').addEventListener('click', () => this.copyDeviceLinkFrom(this.el.lobbyDeviceLink));
     document.getElementById('device-copy').addEventListener('click', () => this.copyDeviceLinkFrom(this.el.deviceLink));
     document.getElementById('device-close').addEventListener('click', () => this.closeDeviceLink());
     this.network.onRemoteMove((m) => this.applyRemoteMove(m));
@@ -1137,30 +1137,17 @@ class CentaurApp {
   }
 
   async start() {
-    // A device link (?me=<player id>) links this device to the
-    // owner's identity before anything else: store it as the
-    // shared identity, and as this room's identity when the link
-    // names a room, then strip it from the address bar so it does
-    // not linger or get reshared by accident.
+    // A game link can carry player ids (me = the maker's, pal =
+    // the friend's). Settle which identity this device plays as
+    // before the game opens; the ids are stripped from the
+    // address bar either way.
     const params = new URLSearchParams(location.search);
-    const meParam = params.get('me');
-    if (meParam && /^[A-Za-z0-9-]{8,80}$/.test(meParam)) {
-      try {
-        localStorage.setItem('bcc-me', meParam);
-        const rid = params.get('room');
-        if (rid) localStorage.setItem(`bcc-player-${rid}`, meParam);
-      } catch { /* storage blocked: this visit still reads bcc-me once */ }
-      netLog(`identity linked from link room=${params.get('room') || '(none)'} me=${meParam.slice(0, 8)}...`);
-      this.identityJustLinked = true;
-      params.delete('me');
-      const clean = new URL(location.href);
-      clean.search = params.toString();
-      history.replaceState(null, '', clean);
-    }
+    const roomId = params.get('room');
+    const linkPal = params.get('pal'); // settleLinkIdentity strips it
+    if (roomId) await this.settleLinkIdentity(params, roomId);
     // A room link opens that game directly (and files it in the
     // list). A ?game= link reopens a solo game. Anything else lands
     // on the games list.
-    const roomId = params.get('room');
     if (roomId && this.workerUrl) {
       netLog(`room link opened room=${roomId} name=${params.get('name') || '(none)'}`);
       let entry = this.library.get(roomId);
@@ -1168,7 +1155,7 @@ class CentaurApp {
         entry = this.library.upsert({
           id: roomId, kind: 'friend',
           name: params.get('name') || 'Friend game',
-          roomId, seat: null, plies: 0, seats: null,
+          roomId, peerId: linkPal || null, seat: null, plies: 0, seats: null,
           finished: false, result: '',
         });
       }
@@ -1264,7 +1251,7 @@ class CentaurApp {
         linkBtn.type = 'button';
         linkBtn.className = 'link-btn';
         linkBtn.textContent = 'Link';
-        linkBtn.setAttribute('aria-label', `Play ${entry.name || 'this game'} as you on another device`);
+        linkBtn.setAttribute('aria-label', `Get the link for ${entry.name || 'this game'}`);
         linkBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           this.openDeviceLink(entry);
@@ -1334,6 +1321,9 @@ class CentaurApp {
     const roomId = this.makeRoomId();
     const entry = this.library.upsert({
       id: roomId, kind: 'friend', name, roomId,
+      // The friend's player id is minted now, so the game's one
+      // link can carry both ids from the start.
+      peerId: crypto.randomUUID ? crypto.randomUUID() : `p-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       seat: 'w', plies: 0, seats: { w: true, b: false },
       finished: false, result: '',
     });
@@ -1415,15 +1405,11 @@ class CentaurApp {
 
   showLobbyFor(entry) {
     this.showLobby();
-    this.el.lobbyLink.value = this.roomLink(entry.roomId, entry.name);
+    this.el.lobbyLink.value = this.roomLink(entry);
     this.el.lobbyLink.classList.remove('hidden');
     this.el.lobbyShare.classList.remove('hidden');
     this.el.lobbyCopy.classList.remove('hidden');
     this.el.lobbyStatus.textContent = 'Send this link to your friend. They will play Black. The game starts when they join.';
-    this.el.lobbyDeviceLink.value = this.deviceLinkFor(entry);
-    this.el.lobbyDeviceLabel.classList.remove('hidden');
-    this.el.lobbyDeviceLink.classList.remove('hidden');
-    this.el.lobbyDeviceCopy.classList.remove('hidden');
   }
 
   // The open game's progress, written back to its list entry. Solo
@@ -1907,11 +1893,21 @@ class CentaurApp {
     }
   }
 
-  roomLink(roomId, name) {
+  // The one link for a friend game. It carries BOTH player ids:
+  // me (the game maker's) and pal (the friend's, minted when the
+  // game was made). A device that already knows either id takes
+  // that seat silently; a brand-new device is asked once which
+  // player it is (settleLinkIdentity). Games made before pal ids
+  // existed produce a me-only link. Either way the link is a key:
+  // anyone with it can claim a seat on a new device, so it stays
+  // private, like the room links always were.
+  roomLink(entry) {
     const url = new URL(location.href);
-    url.searchParams.set('room', roomId);
+    url.searchParams.set('room', entry.roomId);
     // The name rides along so the friend's list shows the same name.
-    if (name) url.searchParams.set('name', name);
+    if (entry.name) url.searchParams.set('name', entry.name);
+    url.searchParams.set('me', this.playerIdForRoom(entry.roomId));
+    if (entry.peerId) url.searchParams.set('pal', entry.peerId);
     url.searchParams.delete('game');
     url.searchParams.delete('worker'); // never share a test override
     return url.toString();
@@ -1938,19 +1934,88 @@ class CentaurApp {
     }
   }
 
-  // A link that carries this device's identity for one room. Opened
-  // on another device it makes that device play this seat (start()
-  // stores the id as that device's bcc-me and per-room id). It also
-  // promotes the id to THIS device's shared identity, so games
-  // created later use the same identity everywhere. Private: anyone
-  // with the link plays as this player.
-  deviceLinkFor(entry) {
-    const id = this.playerIdForRoom(entry.roomId);
-    try { localStorage.setItem('bcc-me', id); } catch { /* ignore */ }
-    netLog(`device link made room=${entry.roomId} identity=${id.slice(0, 8)}...`);
-    const url = new URL(this.roomLink(entry.roomId, entry.name));
-    url.searchParams.set('me', id);
-    return url.toString();
+  // Decide which identity THIS device plays as for a linked room,
+  // before the game opens:
+  // - This device already holds one of the link's ids (as its
+  //   per-room id, or the maker's id as its shared bcc-me): that
+  //   seat, silently.
+  // - The link carries only me (an owner's private link, or a game
+  //   made before pal ids existed): claim the maker's seat,
+  //   replacing a stale local id. This is also how the owner
+  //   reclaims a seat from a browser that got locked out.
+  // - Both ids, this device knows neither, but already holds a
+  //   different id for the room: keep it. An established player
+  //   reopening the link stays themselves.
+  // - Both ids and this device is new to the room: ask once which
+  //   player it is, and remember the answer.
+  async settleLinkIdentity(params, roomId) {
+    const valid = (v) => !!v && /^[A-Za-z0-9-]{8,80}$/.test(v);
+    const meId = valid(params.get('me')) ? params.get('me') : null;
+    const palId = valid(params.get('pal')) ? params.get('pal') : null;
+    if (!meId && !palId) { this.stripIdentityParams(params); return; }
+    const store = safeLocalStorage();
+    if (!store) { this.stripIdentityParams(params); return; }
+    const key = `bcc-player-${roomId}`;
+    const mine = store.getItem(key);
+    const shared = store.getItem('bcc-me');
+    const claim = (id, owner) => {
+      try {
+        store.setItem(key, id);
+        if (owner) store.setItem('bcc-me', id);
+      } catch { /* ignore */ }
+    };
+    if (meId && (mine === meId || shared === meId)) {
+      claim(meId, true);
+      netLog(`link identity: known device takes maker seat room=${roomId}`);
+    } else if (palId && mine === palId) {
+      netLog(`link identity: known device keeps friend seat room=${roomId}`);
+    } else if (meId && !palId) {
+      claim(meId, true);
+      this.identityJustLinked = true;
+      netLog(`link identity: owner link claims maker seat room=${roomId}`);
+    } else if (meId && palId && !mine) {
+      const choice = await this.askWho(params.get('name'));
+      if (choice === 'w') {
+        claim(meId, true);
+        this.identityJustLinked = true;
+        netLog(`link identity: new device chose maker (White) room=${roomId}`);
+      } else {
+        claim(palId, false);
+        netLog(`link identity: new device chose friend (Black) room=${roomId}`);
+      }
+    } else if (palId && !mine) {
+      claim(palId, false);
+      netLog(`link identity: friend link claims friend seat room=${roomId}`);
+    } else {
+      netLog(`link identity: established device keeps its own id room=${roomId}`);
+    }
+    this.stripIdentityParams(params);
+  }
+
+  stripIdentityParams(params) {
+    if (!params.has('me') && !params.has('pal')) return;
+    params.delete('me');
+    params.delete('pal');
+    const clean = new URL(location.href);
+    clean.search = params.toString();
+    history.replaceState(null, '', clean);
+  }
+
+  askWho(name) {
+    return new Promise((resolve) => {
+      this.el.whoName.textContent = name || 'Friend game';
+      this.el.whoOverlay.classList.remove('hidden');
+      const onWhite = () => done('w');
+      const onBlack = () => done('b');
+      const done = (choice) => {
+        this.el.whoOverlay.classList.add('hidden');
+        this.el.whoWhite.removeEventListener('click', onWhite);
+        this.el.whoBlack.removeEventListener('click', onBlack);
+        resolve(choice);
+      };
+      this.el.whoWhite.addEventListener('click', onWhite);
+      this.el.whoBlack.addEventListener('click', onBlack);
+    });
   }
 
   makeRoomId() {
@@ -1966,10 +2031,6 @@ class CentaurApp {
     this.el.lobbyShare.classList.add('hidden');
     this.el.lobbyCopy.classList.add('hidden');
     this.el.lobbyLink.value = '';
-    this.el.lobbyDeviceLabel.classList.add('hidden');
-    this.el.lobbyDeviceLink.classList.add('hidden');
-    this.el.lobbyDeviceCopy.classList.add('hidden');
-    this.el.lobbyDeviceLink.value = '';
     this.el.lobbyStatus.textContent = 'Making your game link...';
   }
 
@@ -2010,7 +2071,7 @@ class CentaurApp {
   }
 
   openDeviceLink(entry) {
-    this.el.deviceLink.value = this.deviceLinkFor(entry);
+    this.el.deviceLink.value = this.roomLink(entry);
     this.el.linkOverlay.classList.remove('hidden');
   }
 
@@ -2023,10 +2084,10 @@ class CentaurApp {
     if (!link) return;
     try {
       await navigator.clipboard.writeText(link);
-      this.toast('Link copied. Open it on your other device.');
+      this.toast('Link copied.');
     } catch {
       input.select();
-      this.toast('Copy the link above and open it on your other device.');
+      this.toast('Copy the link above.');
     }
   }
 }
