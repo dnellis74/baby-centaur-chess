@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Baby Centaur Chess</title>
-  <link rel="stylesheet" href="style.css?v=22" />
+  <link rel="stylesheet" href="style.css?v=23" />
 
   <!--
     No build step. This page uses ES modules + import maps, which require
@@ -94,9 +94,26 @@
         <button class="lobby-btn hidden" id="lobby-copy" type="button">Copy link</button>
         <button class="lobby-btn" id="lobby-cancel" type="button">Back</button>
       </div>
+      <p class="lobby-status hidden" id="lobby-device-label">To play as you on another device, open this link there. Keep it private: anyone with it plays your seat.</p>
+      <input class="lobby-link hidden" id="lobby-device-link" readonly />
+      <div class="lobby-row">
+        <button class="lobby-btn hidden" id="lobby-device-copy" type="button">Copy my-device link</button>
+      </div>
     </div>
   </div>
 
-  <script type="module" src="app.js?v=22"></script>
+  <div class="lobby hidden" id="link-overlay">
+    <div class="lobby-card">
+      <h2>Play as you on another device</h2>
+      <p class="lobby-status">Open this link on your phone or in another browser and that device plays your seat in this game. Anyone with this link plays as you, so keep it private.</p>
+      <input class="lobby-link" id="device-link" readonly />
+      <div class="lobby-row">
+        <button class="lobby-btn" id="device-copy" type="button">Copy link</button>
+        <button class="lobby-btn" id="device-close" type="button">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js?v=23"></script>
 </body>
 </html>

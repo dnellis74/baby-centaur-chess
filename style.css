@@ -581,6 +581,20 @@ body {
   border-color: #a04a4a;
 }
 
+.link-btn {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 8px 10px;
+  color: #bcd3e8;
+  background: transparent;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
 .empty-state {
   margin: 24px 0 8px;
   text-align: center;
