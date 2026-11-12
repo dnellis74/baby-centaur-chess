@@ -27,3 +27,11 @@ export const AUTO_HINTS = true;
 
 // Start with the board flipped (Black at the bottom).
 export const FLIPPED = false;
+
+// Game server for network play (Phase 3). The live worker URL; the game
+// connects over wss to <WORKER_URL>/room/<id>. Network play is opt-in:
+// the "Play with a friend" button only shows with ?friends=1 in the
+// URL (a shared room link carries it), so the plain link stays solo vs
+// Stockfish. For local testing, ?worker=ws://localhost:8787 overrides
+// this without editing the file.
+export const WORKER_URL = 'https://baby-centaur-chess-rooms.dnellis74.workers.dev';

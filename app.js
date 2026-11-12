@@ -16,8 +16,8 @@
    ===================================================================== */
 
 import { Chess } from 'chess.js';
-import { pieceArt } from './pieces.js?v=14';
-import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED } from './config.js?v=14';
+import { pieceArt } from './pieces.js?v=15';
+import { MODE, ASSIST, OPPONENT, AUTO_HINTS, FLIPPED, WORKER_URL } from './config.js?v=15';
 
 /* ------------------------------------------------------------------ */
 /* Config                                                              */
@@ -762,37 +762,172 @@ class EngineBridge {
 }
 
 /* ------------------------------------------------------------------ */
-/* NetworkSyncBridge — abstract network seam (Phase 3 stub)            */
+/* NetworkSyncBridge — Cloudflare room relay (Phase 3)                 */
 /* ------------------------------------------------------------------ */
-/* Phase 1 is a local mock: it mirrors state machine, turn flags and
-   clocks locally and never echoes your own move back. Phase 3 replaces
-   ONLY this class with a WebSocket / Socket.io / Supabase Realtime
-   transport implementing the same four methods. Nothing in
-   GameStateManager, BoardView, or CentaurApp changes.
-     connect()    -> Promise<{ mode }>
-     sendMove(m)  -> deliver a local move to the peer
-     onRemoteMove(cb) -> cb(move) for moves arriving from the peer
-     getState()   -> mirrored { fen, turn } snapshot                */
+/* WebSocket to the room worker (see worker/src/index.js). One socket
+   per client; the server holds the room, so a dropped player rejoins
+   it with the same playerId and seat. Only the opponent's moves reach
+   onRemoteMove; your own moves are never echoed back. Reconnects run
+   automatically with backoff; a welcome on any (re)connect carries the
+   full server move list, which the app replays to resync.
+     connect(url, roomId, playerId) -> Promise<welcome|null>
+       welcome, or null on timeout / unreachable (caller falls back)
+     sendMove(move) -> true if sent, false if queued (socket down)
+     sendRematch()  -> reset the room for a new game
+     sendSync()     -> ask the server for a full welcome resync
+     onRemoteMove(cb) -> cb(move) for the opponent's moves
+     onWelcome(cb)    -> cb(welcome) on reconnect welcomes
+     onPeer(cb)       -> cb(connected) when the other seat joins/leaves
+     onReset(cb)      -> cb() when the other seat starts a rematch
+     disconnect()     -> stop reconnecting and close the socket       */
 
 class NetworkSyncBridge {
   constructor() {
-    this.mode = 'local-mock';
-    this.mirror = { fen: null, turn: 'w' };
+    this.ws = null;
+    this.url = null;
+    this.roomId = null;
+    this.playerId = null;
+    this.wantConnection = false;
+    this.reconnectDelay = 1000;
+    this.reconnectTimer = null;
+    this.pendingWelcome = null; // { resolve } for the first welcome
     this.remoteHandlers = [];
+    this.welcomeHandlers = [];
+    this.peerHandlers = [];
+    this.resetHandlers = [];
   }
 
-  async connect() { return { mode: this.mode }; }
+  connect(url, roomId, playerId, timeoutMs = 10000) {
+    this.url = url;
+    this.roomId = roomId;
+    this.playerId = playerId;
+    this.wantConnection = true;
+    this.reconnectDelay = 1000;
+    return new Promise((resolve) => {
+      this.pendingWelcome = { resolve };
+      const timer = setTimeout(() => {
+        if (this.pendingWelcome) {
+          this.pendingWelcome = null;
+          resolve(null);
+        }
+      }, timeoutMs);
+      this.pendingWelcome.timer = timer;
+      this.openSocket();
+    });
+  }
+
+  openSocket() {
+    if (!this.wantConnection) return;
+    let ws;
+    try {
+      ws = new WebSocket(`${this.url}/room/${this.roomId}`);
+    } catch {
+      this.scheduleReconnect();
+      return;
+    }
+    this.ws = ws;
+    ws.addEventListener('open', () => {
+      this.reconnectDelay = 1000;
+      this.sendRaw({ type: 'join', playerId: this.playerId });
+    });
+    ws.addEventListener('message', (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (msg.type === 'welcome') {
+        if (this.pendingWelcome) {
+          const { resolve, timer } = this.pendingWelcome;
+          this.pendingWelcome = null;
+          clearTimeout(timer);
+          resolve(msg);
+        } else {
+          for (const cb of this.welcomeHandlers) cb(msg);
+        }
+      } else if (msg.type === 'move') {
+        for (const cb of this.remoteHandlers) cb(msg);
+      } else if (msg.type === 'peer') {
+        for (const cb of this.peerHandlers) cb(msg.connected);
+      } else if (msg.type === 'reset') {
+        for (const cb of this.resetHandlers) cb();
+      }
+      // 'error' and 'full' need no UI: a rejected move is simply not
+      // relayed, and a full room only happens with a shared link.
+    });
+    ws.addEventListener('close', () => {
+      if (this.ws === ws) this.ws = null;
+      this.scheduleReconnect();
+    });
+    ws.addEventListener('error', () => {
+      // Close follows; the close handler schedules the reconnect.
+    });
+  }
+
+  scheduleReconnect() {
+    if (!this.wantConnection || this.reconnectTimer) return;
+    const delay = this.reconnectDelay;
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 30000);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.openSocket();
+    }, delay);
+  }
+
+  sendRaw(obj) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify(obj));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
 
   sendMove(move) {
-    this.mirror.fen = move.afterFen || this.mirror.fen;
-    this.mirror.turn = move.afterFen ? (move.afterFen.split(' ')[1]) : this.mirror.turn;
-    // Mock only: no echo. A real transport delivers ONLY the
-    // opponent's moves to onRemoteMove.
+    return this.sendRaw({
+      type: 'move',
+      from: move.from,
+      to: move.to,
+      promotion: move.promotion || null,
+    });
+  }
+
+  sendRematch() {
+    return this.sendRaw({ type: 'rematch' });
+  }
+
+  sendSync() {
+    return this.sendRaw({ type: 'sync' });
   }
 
   onRemoteMove(cb) { this.remoteHandlers.push(cb); }
+  onWelcome(cb) { this.welcomeHandlers.push(cb); }
+  onPeer(cb) { this.peerHandlers.push(cb); }
+  onReset(cb) { this.resetHandlers.push(cb); }
 
-  getState() { return { ...this.mirror }; }
+  disconnect() {
+    this.wantConnection = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.pendingWelcome) {
+      const { resolve, timer } = this.pendingWelcome;
+      this.pendingWelcome = null;
+      clearTimeout(timer);
+      resolve(null);
+    }
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch { /* already gone */ }
+      this.ws = null;
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -802,7 +937,7 @@ class NetworkSyncBridge {
 class CentaurApp {
   constructor() {
     this.state = new GameStateManager();
-    this.engine = new EngineBridge('engine-worker.js?v=14');
+    this.engine = new EngineBridge('engine-worker.js?v=15');
     this.network = new NetworkSyncBridge();
     this.view = new BoardView(document.getElementById('scene-container'), {
       onSelect: (sq) => this.onSelect(sq),
@@ -813,7 +948,7 @@ class CentaurApp {
     });
 
     // Options live in config.js, not in the interface (kids' build).
-    this.mode = MODE; // 'solo' | 'advise'
+    this.mode = MODE; // 'solo' | 'advise' | 'network'
     // Assist dial: 'full' (suggested moves only), 'hints' (no intercept),
     // 'off' (no partner output at all). This is the partner's help level,
     // not the solo opponent — Stockfish still plays Black in solo mode
@@ -824,6 +959,17 @@ class CentaurApp {
     // weaker. Hints and the blunder intercept stay full strength.
     this.opponent = OPPONENT;
     this.autoHints = AUTO_HINTS;
+    // Network (Phase 3): seat is set on welcome; null means solo.
+    // workerUrl comes from config, or ?worker= for local testing.
+    // Network play is opt-in: ?friends=1 shows the button, and a
+    // shared room link (?room=) or a ?worker= override turns it on.
+    // With no param the game is solo vs Stockfish, exactly as before.
+    this.seat = null;
+    this.pendingMove = null;
+    const params = new URLSearchParams(location.search);
+    this.roomId = params.get('room');
+    this.workerUrl = params.get('worker') || WORKER_URL;
+    this.networkOn = params.has('friends') || params.has('worker') || params.has('room');
     this.inputLocked = false;
     this.cachedAnalysis = null; // { fen, lines } — freshest engine view
     this.highlightFen = null;
@@ -839,22 +985,63 @@ class CentaurApp {
       evalFill: document.getElementById('eval-fill'),
       evalLabel: document.getElementById('eval-label'),
       toast: document.getElementById('toast'),
+      friendBtn: document.getElementById('friend-btn'),
+      lobby: document.getElementById('lobby'),
+      lobbyStatus: document.getElementById('lobby-status'),
+      lobbyLink: document.getElementById('lobby-link'),
+      lobbyShare: document.getElementById('lobby-share'),
+      lobbyCopy: document.getElementById('lobby-copy'),
+      lobbyCancel: document.getElementById('lobby-cancel'),
     };
 
     document.getElementById('play-again').addEventListener('click', () => this.newGame());
+    document.getElementById('friend-btn').addEventListener('click', () => this.createRoom());
+    document.getElementById('lobby-share').addEventListener('click', () => this.shareRoomLink());
+    document.getElementById('lobby-copy').addEventListener('click', () => this.copyRoomLink());
+    document.getElementById('lobby-cancel').addEventListener('click', () => this.cancelLobby());
+    this.network.onRemoteMove((m) => this.applyRemoteMove(m));
+    this.network.onWelcome((w) => this.applyWelcome(w));
+    this.network.onPeer((connected) => {
+      if (this.mode !== 'network') return;
+      if (connected && !this.el.lobby.classList.contains('hidden')) {
+        this.hideLobby();
+        return;
+      }
+      this.toast(connected
+        ? 'Your friend is back.'
+        : 'Your friend left. The game waits here until they come back.');
+    });
+    this.network.onReset(() => this.newGame({ remote: true }));
     if (FLIPPED) this.view.setFlipped(true);
     if (this.assist === 'off') this.el.evalLabel.textContent = '—';
+    // Friend play is opt-in: hidden unless the worker is configured
+    // and this visit asked for it (?friends=1, ?room=, or ?worker=).
+    if (!this.workerUrl || !this.networkOn) this.el.friendBtn.classList.add('hidden');
   }
 
   async start() {
-    await this.network.connect();
     const engineOk = await this.engine.init();
     if (!engineOk) this.toast('Partner unavailable (engine failed to load) — playing without hints');
-    this.view.setPieces(this.state.pieces());
-    this.refreshUI();
-    // Background analysis fills eval bar, then auto hints
-    // show the partner's ideas for the side to move.
-    this.refreshAnalysis().then(() => this.maybeAutoHint());
+    // Network intent: a room link plus a configured worker. Otherwise
+    // the game is solo exactly as before.
+    if (this.roomId && this.workerUrl) {
+      this.el.message.textContent = 'Connecting...';
+      const playerId = this.playerIdForRoom(this.roomId);
+      const welcome = await this.network.connect(this.workerUrl, this.roomId, playerId);
+      if (welcome) {
+        this.mode = 'network';
+        this.applyWelcome(welcome);
+      } else {
+        this.toast("Couldn't reach the game server, playing solo instead.");
+      }
+    }
+    if (this.mode !== 'network') {
+      this.view.setPieces(this.state.pieces());
+      this.refreshUI();
+      // Background analysis fills eval bar, then auto hints
+      // show the partner's ideas for the side to move.
+      this.refreshAnalysis().then(() => this.maybeAutoHint());
+    }
   }
 
   /* UI ------------------------------------------------------------ */
@@ -932,7 +1119,9 @@ class CentaurApp {
   }
 
   // A turn belongs to a human partner when it is not the solo opponent's.
+  // In network mode, only the local seat's turns are human turns.
   isHumanTurn() {
+    if (this.mode === 'network') return this.seat !== null && this.state.turn() === this.seat;
     return this.mode === 'advise' || this.state.turn() === 'w';
   }
 
@@ -1136,7 +1325,9 @@ class CentaurApp {
   }
 
   // Commit visuals, network, UI, and the solo opponent's reply.
-  async finalizeMove(res) {
+  // Remote moves (the opponent's, relayed by the server) share this
+  // path but skip the send-back and the solo reply.
+  async finalizeMove(res, { remote = false } = {}) {
     const move = res.move;
     // En passant captures a pawn that is NOT on the destination square.
     let capturedSquare = null;
@@ -1158,7 +1349,13 @@ class CentaurApp {
     // and en passant, so the board can never drift from the rules.
     this.view.setPieces(this.state.pieces());
 
-    this.network.sendMove({ from: move.from, to: move.to, san: move.san, afterFen: res.fenAfter });
+    // Network: relay the move to the other seat. If the socket is down,
+    // hold it as pending; the reconnect welcome replays it (see
+    // applyWelcome). Solo never sends.
+    if (!remote && this.mode === 'network') {
+      const sent = this.network.sendMove({ from: move.from, to: move.to, promotion: move.promotion || null });
+      if (!sent) this.pendingMove = { from: move.from, to: move.to, promotion: move.promotion || null };
+    }
     this.highlightFen = null;
     this.highlightSquares = new Set();
     this.highlightPairs = [];
@@ -1190,7 +1387,7 @@ class CentaurApp {
     if (res) this.finalizeMove(res);
   }
 
-  newGame() {
+  newGame({ remote = false } = {}) {
     this.closePromotionPicker();
     this.state.reset();
     this.view.setPieces(this.state.pieces());
@@ -1202,10 +1399,159 @@ class CentaurApp {
     this.highlightPairs = [];
     this.inputLocked = false;
     this.view.interactive = true;
+    this.pendingMove = null;
     this.el.evalFill.style.width = '50%';
     this.el.evalLabel.textContent = this.assist === 'off' ? '—' : '+0.0';
     this.refreshUI();
     this.refreshAnalysis().then(() => this.maybeAutoHint());
+    // Network rematch: the other seat resets on receipt; a remote
+    // reset must not echo back.
+    if (!remote && this.mode === 'network') this.network.sendRematch();
+  }
+  /* Network play --------------------------------------------------- */
+
+  // A full server state arrives on every (re)connect. Reset locally,
+  // replay the server's moves, then re-apply a move that was played
+  // while offline and never reached the server.
+  applyWelcome(data) {
+    if (data.seat) this.seat = data.seat;
+    // In network mode your pieces sit at the bottom, whatever the
+    // solo FLIPPED setting says.
+    this.view.setFlipped(this.seat === 'b');
+    this.state.reset();
+    for (const m of data.moves || []) {
+      const res = this.state.tryMove(m.from, m.to, m.promotion || 'q');
+      if (!res) break; // corrupt tail: keep the valid prefix
+    }
+    this.view.setPieces(this.state.pieces());
+    this.view.clearHighlights();
+    this.view.clearSelection();
+    this.cachedAnalysis = null;
+    this.highlightFen = null;
+    this.highlightSquares = new Set();
+    this.highlightPairs = [];
+    this.refreshUI();
+    if (this.pendingMove) {
+      const p = this.pendingMove;
+      this.pendingMove = null;
+      const res = this.state.tryMove(p.from, p.to, p.promotion || 'q');
+      if (res) this.finalizeMove(res);
+    }
+    this.refreshAnalysis().then(() => this.maybeAutoHint());
+  }
+
+  applyRemoteMove(m) {
+    if (this.mode !== 'network' || this.state.isGameOver()) return;
+    const res = this.state.tryMove(m.from, m.to, m.promotion || 'q');
+    if (res) {
+      this.finalizeMove(res, { remote: true });
+    } else {
+      // Desync (shouldn't happen): ask the server for the full list.
+      this.network.sendSync();
+    }
+  }
+
+  roomLink(roomId) {
+    const url = new URL(location.href);
+    url.searchParams.set('room', roomId);
+    url.searchParams.set('friends', '1'); // joiner's tab opts into network play
+    url.searchParams.delete('worker'); // never share a test override
+    return url.toString();
+  }
+
+  playerIdForRoom(roomId) {
+    const key = `bcc-player-${roomId}`;
+    try {
+      let id = localStorage.getItem(key);
+      if (!id) {
+        id = crypto.randomUUID ? crypto.randomUUID() : `p-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        localStorage.setItem(key, id);
+      }
+      return id;
+    } catch {
+      return `p-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    }
+  }
+
+  makeRoomId() {
+    const alphabet = 'abcdefghjkmnpqrstuvwxyz23456789';
+    const bytes = new Uint8Array(12);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map((b) => alphabet[b % alphabet.length]).join('');
+  }
+
+  showLobby() {
+    this.el.lobby.classList.remove('hidden');
+    this.el.lobbyLink.classList.add('hidden');
+    this.el.lobbyShare.classList.add('hidden');
+    this.el.lobbyCopy.classList.add('hidden');
+    this.el.lobbyLink.value = '';
+    this.el.lobbyStatus.textContent = 'Making your game link...';
+  }
+
+  hideLobby() {
+    this.el.lobby.classList.add('hidden');
+  }
+
+  async createRoom() {
+    if (!this.workerUrl) return;
+    this.roomId = this.makeRoomId();
+    const playerId = this.playerIdForRoom(this.roomId);
+    this.showLobby();
+    const welcome = await this.network.connect(this.workerUrl, this.roomId, playerId);
+    // Back pressed while connecting: cancelLobby already cleaned up.
+    if (this.el.lobby.classList.contains('hidden')) return;
+    if (!welcome) {
+      this.toast("Couldn't reach the game server.");
+      this.el.lobby.classList.add('hidden');
+      this.roomId = null;
+      return;
+    }
+    this.mode = 'network';
+    this.applyWelcome(welcome);
+    // Fresh network game: the lobby stays until the friend joins.
+    this.el.lobbyLink.value = this.roomLink(this.roomId);
+    this.el.lobbyLink.classList.remove('hidden');
+    this.el.lobbyShare.classList.remove('hidden');
+    this.el.lobbyCopy.classList.remove('hidden');
+    this.el.lobbyStatus.textContent = 'Send this link to your friend. The game starts when they join.';
+  }
+
+  cancelLobby() {
+    const wasNetwork = this.mode === 'network';
+    this.network.disconnect();
+    this.mode = 'solo';
+    this.seat = null;
+    this.roomId = null;
+    this.pendingMove = null;
+    this.hideLobby();
+    // Only a started network game needs replacing; a cancelled connect
+    // leaves the solo game underneath untouched.
+    if (wasNetwork) this.newGame();
+  }
+
+  async shareRoomLink() {
+    const link = this.el.lobbyLink.value;
+    if (!link) return;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: 'Baby Centaur Chess', url: link });
+        return;
+      } catch { /* dismissed or failed: fall through to copy */ }
+    }
+    this.copyRoomLink();
+  }
+
+  async copyRoomLink() {
+    const link = this.el.lobbyLink.value;
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      this.toast('Link copied. Send it to your friend.');
+    } catch {
+      this.el.lobbyLink.select();
+      this.toast('Copy the link above and send it to your friend.');
+    }
   }
 }
 

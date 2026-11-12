@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Baby Centaur Chess</title>
-  <link rel="stylesheet" href="style.css?v=14" />
+  <link rel="stylesheet" href="style.css?v=15" />
 
   <!--
     No build step. This page uses ES modules + import maps, which require
@@ -25,6 +25,7 @@
 <body>
   <header class="app-header">
     <h1>Baby Centaur Chess</h1>
+    <button class="friend-btn" id="friend-btn" type="button">Play with a friend</button>
   </header>
 
   <main class="layout">
@@ -56,6 +57,19 @@
     </section>
   </main>
 
-  <script type="module" src="app.js?v=14"></script>
+  <div class="lobby hidden" id="lobby">
+    <div class="lobby-card">
+      <h2>Play with a friend</h2>
+      <p class="lobby-status" id="lobby-status">Making your game link...</p>
+      <input class="lobby-link hidden" id="lobby-link" readonly />
+      <div class="lobby-row">
+        <button class="lobby-btn hidden" id="lobby-share" type="button">Share link</button>
+        <button class="lobby-btn hidden" id="lobby-copy" type="button">Copy link</button>
+        <button class="lobby-btn" id="lobby-cancel" type="button">Back</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="app.js?v=15"></script>
 </body>
 </html>

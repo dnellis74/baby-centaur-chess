@@ -36,6 +36,10 @@ body {
 
 .app-header {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 8px 12px 6px;
   border-bottom: 1px solid #232c38;
 }
@@ -44,7 +48,92 @@ body {
   margin: 0;
   font-size: 18px;
   letter-spacing: 0.2px;
+  white-space: nowrap;
 }
+
+.friend-btn {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 14px;
+  color: #e8ecef;
+  background: #232c38;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  padding: 8px 12px;
+  min-height: 36px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.friend-btn:hover { background: #2c3847; }
+
+/* Lobby overlay: the tiny pre-game screen for network play. */
+.lobby {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 20, 24, 0.92);
+  z-index: 30;
+  padding: 20px;
+}
+
+.lobby-card {
+  background: #232c38;
+  border: 1px solid #3a4756;
+  border-radius: 14px;
+  padding: 20px;
+  text-align: center;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
+}
+
+.lobby-card h2 {
+  margin: 0 0 10px;
+  font-size: 19px;
+}
+
+.lobby-status {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: #9aa7b5;
+}
+
+.lobby-link {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  color: #e8ecef;
+  background: #1a212b;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 14px;
+  text-overflow: ellipsis;
+}
+
+.lobby-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.lobby-btn {
+  font: inherit;
+  color: #e8ecef;
+  background: #1a212b;
+  border: 1px solid #35404e;
+  border-radius: 8px;
+  padding: 12px 18px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.lobby-btn:hover { background: #2c3847; }
+
+/* Shared hiding helper (promo picker and play-again keep their own). */
+.hidden { display: none !important; }
 
 /* Base layout: one column — board, score slider, message box —
    centered vertically in the space below the header. */
